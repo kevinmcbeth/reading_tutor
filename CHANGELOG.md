@@ -6,6 +6,9 @@ All notable changes to this project will be automatically documented here.
 
 ### Bug Fixes
 
+- auto-advance uses total stories passed instead of consecutive recent
+- prevent orphaned sessions and add cleanup for incomplete sessions
+- graceful session transition after reading completion
 - patch 21 security vulnerabilities across backend, deploy, and nginx
 
 ### CI/CD
@@ -14,6 +17,7 @@ All notable changes to this project will be automatically documented here.
 
 ### Documentation
 
+- update changelog [skip ci] by @github-actions[bot]
 - update changelog [skip ci] by @github-actions[bot]
 - update changelog [skip ci] by @github-actions[bot]
 
