@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 _tts_instance = None
 _tts_available = True
-_semaphore = asyncio.Semaphore(3)
+_semaphore = asyncio.Semaphore(8)
 
 
 def _get_tts():

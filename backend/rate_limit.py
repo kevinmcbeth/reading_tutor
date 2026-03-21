@@ -1,4 +1,4 @@
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 # Atomic Lua script: increments counter and sets TTL in one round-trip.
 # Avoids the race condition where INCR succeeds but EXPIRE never runs.
@@ -24,4 +24,26 @@ async def check_rate_limit(
         raise HTTPException(
             status_code=429,
             detail=f"Rate limit exceeded for {action}. Try again later.",
+        )
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP from request, respecting X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def check_rate_limit_by_ip(
+    redis, request: Request, action: str, max_requests: int, window_seconds: int
+) -> None:
+    """Rate limit by client IP for unauthenticated endpoints."""
+    ip = _get_client_ip(request)
+    key = f"rate:{action}:ip:{ip}"
+    current = await redis.eval(_RATE_LIMIT_SCRIPT, 1, key, window_seconds)
+    if current > max_requests:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many requests. Try again later.",
         )

@@ -1,27 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fetchStories, StoryResponse } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import StoryCard from '../components/StoryCard';
 
 const DIFFICULTY_TABS = ['all', 'easy', 'medium', 'hard'] as const;
+const PAGE_SIZE = 50;
 
 export default function StoryLibraryPage() {
   const navigate = useNavigate();
   const { selectedChild } = useAuth();
   const [stories, setStories] = useState<StoryResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [activeTab, setActiveTab] = useState<string>('all');
+  const offsetRef = useRef(0);
 
   const childName = selectedChild?.name || 'Reader';
   const childAvatar = selectedChild?.avatar || '😊';
 
   useEffect(() => {
-    fetchStories()
-      .then(setStories)
+    offsetRef.current = 0;
+    setHasMore(true);
+    setLoading(true);
+    fetchStories(undefined, undefined, PAGE_SIZE, 0)
+      .then((data) => {
+        setStories(data);
+        offsetRef.current = data.length;
+        setHasMore(data.length >= PAGE_SIZE);
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    fetchStories(undefined, undefined, PAGE_SIZE, offsetRef.current)
+      .then((data) => {
+        setStories((prev) => [...prev, ...data]);
+        offsetRef.current += data.length;
+        setHasMore(data.length >= PAGE_SIZE);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingMore(false));
+  }, [loadingMore, hasMore]);
 
   const filtered = activeTab === 'all'
     ? stories
@@ -86,18 +110,31 @@ export default function StoryLibraryPage() {
           <p className="text-xl text-gray-500">No stories yet! Ask a parent to add some.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
-          {filtered.map((story) => (
-            <StoryCard
-              key={story.id}
-              storyId={story.id}
-              title={story.title}
-              difficulty={story.difficulty}
-              theme={story.theme}
-              onClick={() => navigate(`/read/${story.id}`)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 max-w-6xl mx-auto">
+            {filtered.map((story) => (
+              <StoryCard
+                key={story.id}
+                storyId={story.id}
+                title={story.title}
+                difficulty={story.difficulty}
+                theme={story.theme}
+                onClick={() => navigate(`/read/${story.id}`)}
+              />
+            ))}
+          </div>
+          {hasMore && activeTab === 'all' && (
+            <div className="text-center mt-8">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="px-8 py-3 bg-white rounded-full font-bold text-gray-600 hover:bg-gray-100 shadow transition"
+              >
+                {loadingMore ? 'Loading...' : 'Load More Stories'}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

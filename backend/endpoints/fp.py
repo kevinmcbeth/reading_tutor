@@ -1,11 +1,12 @@
 """F&P Guided Reading Level endpoints."""
+import json as json_mod
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from auth import get_current_family
 from database import get_pool
-from endpoints.stories import _build_story_response, _job_from_row
+from endpoints.stories import _build_story_response, _build_story_responses_batch, _job_from_row
 from models.api_models import (
     FPLevelResponse,
     FPLevelSet,
@@ -24,12 +25,25 @@ FP_DROP_STORIES = 3
 router = APIRouter(prefix="/api/fp", tags=["fp"])
 
 
+_FP_LEVELS_CACHE_KEY = "cache:fp_levels"
+_FP_LEVELS_CACHE_TTL = 86400  # 24 hours — level definitions rarely change
+
+
 @router.get("/levels", response_model=list[FPLevelResponse])
-async def list_fp_levels(family_id: int = Depends(get_current_family)):
-    """List all F&P level definitions."""
+async def list_fp_levels(
+    request: Request,
+    family_id: int = Depends(get_current_family),
+):
+    """List all F&P level definitions (cached 24h in Redis)."""
+    redis = request.app.state.redis
+
+    cached = await redis.get(_FP_LEVELS_CACHE_KEY)
+    if cached:
+        return json_mod.loads(cached)
+
     pool = get_pool()
     rows = await pool.fetch("SELECT * FROM fp_levels ORDER BY sort_order")
-    return [
+    result = [
         FPLevelResponse(
             id=r["id"],
             level=r["level"],
@@ -43,6 +57,12 @@ async def list_fp_levels(family_id: int = Depends(get_current_family)):
         )
         for r in rows
     ]
+    await redis.setex(
+        _FP_LEVELS_CACHE_KEY,
+        _FP_LEVELS_CACHE_TTL,
+        json_mod.dumps([r.model_dump() for r in result]),
+    )
+    return result
 
 
 @router.get("/stories", response_model=list[StoryResponse])
@@ -57,10 +77,7 @@ async def list_fp_stories(
         "AND (family_id = $2 OR family_id IS NULL) ORDER BY created_at DESC",
         level, family_id,
     )
-    results = []
-    for row in rows:
-        results.append(await _build_story_response(pool, row))
-    return results
+    return await _build_story_responses_batch(pool, rows)
 
 
 @router.post("/generate", response_model=GenerationJobResponse)

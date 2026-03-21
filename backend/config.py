@@ -22,8 +22,8 @@ class Settings(BaseSettings):
 
     # PostgreSQL
     DATABASE_URL: str = "postgresql://reading_tutor:password@localhost:5432/reading_tutor"
-    DB_POOL_MIN: int = 5
-    DB_POOL_MAX: int = 20
+    DB_POOL_MIN: int = 10
+    DB_POOL_MAX: int = 50
 
     # JWT Authentication
     JWT_SECRET: str = ""
