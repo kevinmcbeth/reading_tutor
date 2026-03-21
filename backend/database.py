@@ -1,6 +1,11 @@
+import json
+import logging
+
 import asyncpg
 
 from config import settings
+
+logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 
@@ -19,6 +24,8 @@ CREATE TABLE IF NOT EXISTS children (
     name TEXT NOT NULL,
     avatar TEXT,
     pin_hash TEXT,
+    fp_level TEXT,
+    fp_level_set_by TEXT DEFAULT 'auto',
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -31,6 +38,7 @@ CREATE TABLE IF NOT EXISTS stories (
     difficulty TEXT,
     theme TEXT,
     style TEXT,
+    fp_level TEXT,
     status TEXT DEFAULT 'pending',
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -90,7 +98,85 @@ CREATE TABLE IF NOT EXISTS generation_logs (
     message TEXT,
     timestamp TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS fp_levels (
+    id SERIAL PRIMARY KEY,
+    level TEXT UNIQUE NOT NULL,
+    sort_order INTEGER NOT NULL,
+    grade_range TEXT,
+    min_sentences INTEGER NOT NULL,
+    max_sentences INTEGER NOT NULL,
+    generate_images BOOLEAN DEFAULT TRUE,
+    image_support TEXT,
+    vocabulary_constraints JSONB,
+    sentence_patterns JSONB,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fp_progress (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    fp_level TEXT NOT NULL,
+    story_id INTEGER REFERENCES stories(id) NOT NULL,
+    session_id INTEGER REFERENCES sessions(id) NOT NULL,
+    accuracy REAL NOT NULL,
+    completed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_fp_progress_child_level ON fp_progress(child_id, fp_level);
+CREATE INDEX IF NOT EXISTS idx_stories_fp_level ON stories(fp_level);
 """
+
+
+FP_LEVEL_DATA = [
+    # (level, sort_order, grade_range, min_sent, max_sent, gen_images, image_support, vocab_constraints, description)
+    ("A", 1, "K", 1, 2, True, "heavy", {"type": "sight_words_only", "words": ["I","a","the","see","is","am","my","to","go","we","can","like","it","in","up","at","on"]}, "Emergent early reader — pattern text, 1-2 sentences, heavy picture support"),
+    ("B", 2, "K", 1, 2, True, "heavy", {"type": "sight_words_only", "words": ["I","a","the","see","is","am","my","to","go","we","can","like","it","in","up","at","on"]}, "Emergent early reader — pattern text, 1-2 sentences, heavy picture support"),
+    ("C", 3, "K-1", 2, 3, True, "strong", {"type": "cvc_plus_sight", "max_syllables": 1}, "Early reader — CVC words + sight words, simple plots"),
+    ("D", 4, "1", 2, 3, True, "strong", {"type": "cvc_plus_sight", "max_syllables": 1}, "Early reader — CVC words + sight words, simple plots"),
+    ("E", 5, "1", 3, 4, True, "moderate", {"type": "expanding", "max_syllables": 2, "allow_contractions": True}, "Early fluent — expanding vocabulary, simple dialogue"),
+    ("F", 6, "1", 3, 4, True, "moderate", {"type": "expanding", "max_syllables": 2, "allow_contractions": True}, "Early fluent — expanding vocabulary, simple dialogue"),
+    ("G", 7, "1-2", 4, 5, True, "light", {"type": "expanding", "max_syllables": 2, "allow_contractions": True}, "Transitional — longer sentences, light picture support"),
+    ("H", 8, "1-2", 4, 5, True, "light", {"type": "expanding", "max_syllables": 2, "allow_contractions": True}, "Transitional — longer sentences, light picture support"),
+    ("I", 9, "2", 5, 7, True, "minimal", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Fluent reader — varied vocabulary, compound words"),
+    ("J", 10, "2", 5, 7, True, "minimal", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Fluent reader — varied vocabulary, compound words"),
+    ("K", 11, "2-3", 6, 8, True, "sparse", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Fluent reader — literary language, sparse images"),
+    ("L", 12, "3", 6, 8, True, "sparse", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Fluent reader — literary language, sparse images"),
+    ("M", 13, "3", 8, 10, True, "rare", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Independent reader — rare image support"),
+    ("N", 14, "3-4", 8, 10, True, "rare", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Independent reader — rare image support"),
+    ("O", 15, "4", 10, 12, False, "none", {"type": "grade_appropriate"}, "Advanced reader — no images, grade-appropriate vocabulary"),
+    ("P", 16, "4", 10, 12, False, "none", {"type": "grade_appropriate"}, "Advanced reader — no images"),
+    ("Q", 17, "4-5", 12, 15, False, "none", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
+    ("R", 18, "5", 12, 15, False, "none", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
+    ("S", 19, "5", 15, 18, False, "none", {"type": "grade_appropriate"}, "Proficient reader"),
+    ("T", 20, "5-6", 15, 18, False, "none", {"type": "grade_appropriate"}, "Proficient reader"),
+    ("U", 21, "6", 18, 22, False, "none", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
+    ("V", 22, "6-7", 18, 22, False, "none", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
+    ("W", 23, "7", 20, 25, False, "none", {"type": "grade_appropriate"}, "Expert reader"),
+    ("X", 24, "7-8", 20, 25, False, "none", {"type": "grade_appropriate"}, "Expert reader"),
+    ("Y", 25, "8", 25, 30, False, "none", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
+    ("Z", 26, "8+", 25, 30, False, "none", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
+    ("Z1", 27, "9+", 30, 40, False, "none", {"type": "grade_appropriate"}, "Advanced expert"),
+    ("Z2", 28, "10+", 30, 40, False, "none", {"type": "grade_appropriate"}, "Advanced expert"),
+]
+
+
+async def seed_fp_levels(conn) -> None:
+    """Insert F&P level definitions if not already present."""
+    existing = await conn.fetchval("SELECT COUNT(*) FROM fp_levels")
+    if existing > 0:
+        return
+
+    for level, sort_order, grade_range, min_s, max_s, gen_images, img_support, vocab, desc in FP_LEVEL_DATA:
+        await conn.execute(
+            """INSERT INTO fp_levels (level, sort_order, grade_range, min_sentences, max_sentences,
+               generate_images, image_support, vocabulary_constraints, description)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+               ON CONFLICT (level) DO NOTHING""",
+            level, sort_order, grade_range, min_s, max_s, gen_images, img_support,
+            json.dumps(vocab), desc,
+        )
+    logger.info("Seeded %d F&P level definitions", len(FP_LEVEL_DATA))
 
 
 async def init_db() -> None:
@@ -99,6 +185,7 @@ async def init_db() -> None:
     _pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=2, max_size=20)
     async with _pool.acquire() as conn:
         await conn.execute(SCHEMA)
+        await seed_fp_levels(conn)
 
 
 async def close_db() -> None:

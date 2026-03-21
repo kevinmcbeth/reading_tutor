@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from database import init_db, close_db
-from endpoints import assets, children, generation, parent, sessions, speech, stories
+from endpoints import assets, children, fp, generation, parent, sessions, speech, stories
 
 
 def _parse_redis_settings(url: str) -> RedisSettings:
@@ -61,6 +61,7 @@ app.include_router(assets.router)
 app.include_router(parent.router)
 app.include_router(generation.router)
 app.include_router(speech.router)
+app.include_router(fp.router)
 
 
 @app.get("/api/health")

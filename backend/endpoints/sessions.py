@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -5,6 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from auth import get_current_family
 from database import get_pool
 from models.api_models import SessionComplete, SessionCreate, SessionResponse
+
+logger = logging.getLogger(__name__)
+
+FP_ADVANCE_THRESHOLD = 0.90
+FP_ADVANCE_STORIES = 3
+FP_DROP_THRESHOLD = 0.70
+FP_DROP_STORIES = 3
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
@@ -126,7 +134,55 @@ async def complete_session(
             )
 
     row = await pool.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
-    return _session_from_row(row)
+    result = _session_from_row(row)
+
+    # F&P progression tracking
+    story_row = await pool.fetchrow(
+        "SELECT fp_level FROM stories WHERE id = $1", session_row["story_id"]
+    )
+    if story_row and story_row["fp_level"]:
+        fp_level = story_row["fp_level"]
+        total_words = session_row["total_words"] or 0
+        accuracy = score / total_words if total_words > 0 else 0.0
+
+        # Record progress
+        await pool.execute(
+            "INSERT INTO fp_progress (child_id, fp_level, story_id, session_id, accuracy) "
+            "VALUES ($1, $2, $3, $4, $5)",
+            session_row["child_id"], fp_level, session_row["story_id"], session_id, accuracy,
+        )
+
+        # Check auto-advancement
+        child = await pool.fetchrow(
+            "SELECT * FROM children WHERE id = $1", session_row["child_id"]
+        )
+        if child and child["fp_level"] == fp_level:
+            recent = await pool.fetch(
+                "SELECT accuracy FROM fp_progress WHERE child_id = $1 AND fp_level = $2 "
+                "ORDER BY completed_at DESC LIMIT $3",
+                session_row["child_id"], fp_level, FP_ADVANCE_STORIES,
+            )
+            if (
+                len(recent) >= FP_ADVANCE_STORIES
+                and all(r["accuracy"] >= FP_ADVANCE_THRESHOLD for r in recent)
+            ):
+                # Auto-advance to next level
+                next_level = await pool.fetchrow(
+                    "SELECT level FROM fp_levels WHERE sort_order = "
+                    "(SELECT sort_order + 1 FROM fp_levels WHERE level = $1)",
+                    fp_level,
+                )
+                if next_level:
+                    await pool.execute(
+                        "UPDATE children SET fp_level = $1, fp_level_set_by = 'auto' WHERE id = $2",
+                        next_level["level"], session_row["child_id"],
+                    )
+                    logger.info(
+                        "Child %d auto-advanced from %s to %s",
+                        session_row["child_id"], fp_level, next_level["level"],
+                    )
+
+    return result
 
 
 @router.get("/child/{child_id}", response_model=list[SessionResponse])

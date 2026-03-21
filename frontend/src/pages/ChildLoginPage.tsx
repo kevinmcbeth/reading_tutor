@@ -29,9 +29,11 @@ export default function ChildLoginPage() {
       .finally(() => setLoading(false));
   }, [logout, navigate]);
 
+  const [selectedChildForMode, setSelectedChildForMode] = useState<ChildResponse | null>(null);
+
   const handleSelectChild = (child: ChildResponse) => {
     selectChild({ id: child.id, name: child.name, avatar: child.avatar || '' });
-    navigate('/library');
+    setSelectedChildForMode(child);
   };
 
   const handleCreateChild = async () => {
@@ -136,6 +138,45 @@ export default function ChildLoginPage() {
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Mode Selection Modal */}
+      {selectedChildForMode && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-lg w-full shadow-2xl">
+            <h2 className="text-3xl font-bold text-gray-800 mb-2 text-center">
+              Hi, {selectedChildForMode.name}!
+            </h2>
+            <p className="text-gray-500 text-center mb-8">What would you like to do?</p>
+
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => { setSelectedChildForMode(null); navigate('/library'); }}
+                className="bg-gradient-to-br from-blue-400 to-cyan-400 rounded-2xl p-6 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
+              >
+                <div className="text-5xl mb-3">📚</div>
+                <div className="text-xl font-bold">Free Reading</div>
+                <div className="text-sm text-white/80 mt-1">Explore any story</div>
+              </button>
+
+              <button
+                onClick={() => { setSelectedChildForMode(null); navigate('/leveled'); }}
+                className="bg-gradient-to-br from-purple-400 to-pink-400 rounded-2xl p-6 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
+              >
+                <div className="text-5xl mb-3">🏆</div>
+                <div className="text-xl font-bold">Leveled Reading</div>
+                <div className="text-sm text-white/80 mt-1">Level up your skills</div>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setSelectedChildForMode(null)}
+              className="w-full mt-4 py-2 text-gray-400 hover:text-gray-600 transition text-sm"
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}

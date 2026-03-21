@@ -63,6 +63,7 @@ class StoryResponse(BaseModel):
     difficulty: Optional[str]
     theme: Optional[str]
     style: Optional[str]
+    fp_level: Optional[str] = None
     status: Optional[str]
     sentences: list[SentenceResponse]
 
@@ -85,6 +86,7 @@ class ChildResponse(BaseModel):
     id: int
     name: str
     avatar: Optional[str]
+    fp_level: Optional[str] = None
     created_at: Optional[str]
     total_words_read: int = 0
     total_sessions: int = 0
@@ -195,3 +197,41 @@ class SpeechRecognitionResponse(BaseModel):
     transcript: str
     alternatives: list[str]
     confidence: float
+
+
+# --- F&P Guided Reading Levels ---
+
+class FPLevelResponse(BaseModel):
+    id: int
+    level: str
+    sort_order: int
+    grade_range: Optional[str]
+    min_sentences: int
+    max_sentences: int
+    generate_images: bool
+    image_support: Optional[str]
+    description: Optional[str]
+
+
+class FPProgressResponse(BaseModel):
+    child_id: int
+    fp_level: str
+    stories_at_level: int
+    stories_passed: int
+    average_accuracy: float
+    suggest_advance: bool = False
+    suggest_drop: bool = False
+
+
+class FPLevelSet(BaseModel):
+    level: str
+
+
+class FPStartRequest(BaseModel):
+    starting_level: str = "A"
+
+
+class FPStoryPrompt(BaseModel):
+    topic: str
+    level: str
+    theme: Optional[str] = None

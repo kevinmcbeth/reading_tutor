@@ -60,6 +60,7 @@ async def _build_story_response(pool, story_row) -> StoryResponse:
         difficulty=story_row["difficulty"],
         theme=story_row["theme"],
         style=story_row["style"],
+        fp_level=story_row.get("fp_level"),
         status=story_row["status"],
         sentences=sentences,
     )

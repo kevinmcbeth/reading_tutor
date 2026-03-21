@@ -9,6 +9,7 @@ export interface StoryResponse {
   difficulty: string;
   theme: string;
   style: string;
+  fp_level: string | null;
   status: string;
   sentences: unknown[];
   created_at: string;
@@ -18,6 +19,7 @@ export interface ChildResponse {
   id: string;
   name: string;
   avatar: string | null;
+  fp_level: string | null;
   created_at: string;
   total_words_read: number;
   total_sessions: number;
@@ -220,4 +222,61 @@ export async function recognizeSpeech(audio: Blob, targetWord?: string): Promise
   const res = await fetch(`${API_BASE}/speech/recognize`, { method: 'POST', body: formData, headers });
   if (!res.ok) throw new Error('Speech recognition failed');
   return res.json();
+}
+
+// --- F&P Guided Reading Levels ---
+
+export interface FPLevelResponse {
+  id: number;
+  level: string;
+  sort_order: number;
+  grade_range: string | null;
+  min_sentences: number;
+  max_sentences: number;
+  generate_images: boolean;
+  image_support: string | null;
+  description: string | null;
+}
+
+export interface FPProgressResponse {
+  child_id: number;
+  fp_level: string;
+  stories_at_level: number;
+  stories_passed: number;
+  average_accuracy: number;
+  suggest_advance: boolean;
+  suggest_drop: boolean;
+}
+
+export async function fetchFPLevels(): Promise<FPLevelResponse[]> {
+  return fetchJson<FPLevelResponse[]>('/fp/levels');
+}
+
+export async function fetchFPStories(level: string): Promise<StoryResponse[]> {
+  return fetchJson<StoryResponse[]>(`/fp/stories?level=${encodeURIComponent(level)}`);
+}
+
+export async function fetchFPProgress(childId: string): Promise<FPProgressResponse> {
+  return fetchJson<FPProgressResponse>(`/fp/child/${childId}/progress`);
+}
+
+export async function setFPLevel(childId: string, level: string): Promise<unknown> {
+  return fetchJson(`/fp/child/${childId}/level`, {
+    method: 'POST',
+    body: JSON.stringify({ level }),
+  });
+}
+
+export async function startFPMode(childId: string, startingLevel: string): Promise<unknown> {
+  return fetchJson(`/fp/child/${childId}/start`, {
+    method: 'POST',
+    body: JSON.stringify({ starting_level: startingLevel }),
+  });
+}
+
+export async function generateFPStory(topic: string, level: string, theme?: string): Promise<unknown> {
+  return fetchJson('/fp/generate', {
+    method: 'POST',
+    body: JSON.stringify({ topic, level, theme: theme || null }),
+  });
 }

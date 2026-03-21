@@ -9,6 +9,8 @@ import ParentDashboard from './pages/ParentDashboard'
 import StoryManagementPage from './pages/StoryManagementPage'
 import GenerationLogsPage from './pages/GenerationLogsPage'
 import QueueMonitorPage from './pages/QueueMonitorPage'
+import LeveledHomePage from './pages/LeveledHomePage'
+import LeveledStoryListPage from './pages/LeveledStoryListPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
@@ -29,6 +31,8 @@ function AppRoutes() {
       <Route path="/parent" element={<ParentLoginPage />} />
       <Route path="/" element={<ProtectedRoute><ChildLoginPage /></ProtectedRoute>} />
       <Route path="/library" element={<ChildRoute><StoryLibraryPage /></ChildRoute>} />
+      <Route path="/leveled" element={<ChildRoute><LeveledHomePage /></ChildRoute>} />
+      <Route path="/leveled/:level" element={<ChildRoute><LeveledStoryListPage /></ChildRoute>} />
       <Route path="/read/:storyId" element={<ChildRoute><ReadingPage /></ChildRoute>} />
       <Route path="/results/:sessionId" element={<ChildRoute><SessionResultPage /></ChildRoute>} />
       <Route path="/parent/dashboard" element={<ProtectedRoute><ParentDashboard /></ProtectedRoute>} />

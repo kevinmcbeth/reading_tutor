@@ -30,6 +30,24 @@ async def generate_story_task(
     )
 
 
+async def generate_fp_story_task(
+    ctx: dict,
+    story_id: int,
+    job_id: int,
+    topic: str,
+    fp_level: str,
+    theme: str | None = None,
+) -> None:
+    """Generate an F&P leveled story in the worker process."""
+    await story_pipeline.run_fp_story_generation(
+        story_id=story_id,
+        job_id=job_id,
+        topic=topic,
+        fp_level=fp_level,
+        theme=theme,
+    )
+
+
 async def startup(ctx: dict) -> None:
     """Initialize DB pool and pre-load TTS model in worker."""
     await init_db()
@@ -51,7 +69,7 @@ def _parse_redis_settings(url: str) -> RedisSettings:
 
 
 class WorkerSettings:
-    functions = [generate_story_task]
+    functions = [generate_story_task, generate_fp_story_task]
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 1

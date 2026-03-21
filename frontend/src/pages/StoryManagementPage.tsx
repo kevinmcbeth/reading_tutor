@@ -6,9 +6,12 @@ import {
   generateStory,
   generateBatch,
   generateMeta,
+  generateFPStory,
+  fetchFPLevels,
   deleteStory,
   StoryResponse,
   GenerationJobResponse,
+  FPLevelResponse,
 } from '../services/api';
 
 const statusStyles: Record<string, string> = {
@@ -43,13 +46,20 @@ export default function StoryManagementPage() {
   const [metaCount, setMetaCount] = useState(5);
   const [metaGenerating, setMetaGenerating] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'single' | 'batch' | 'meta'>('single');
+  // Leveled Generate
+  const [fpTopic, setFpTopic] = useState('');
+  const [fpLevel, setFpLevel] = useState('A');
+  const [fpLevels, setFpLevels] = useState<FPLevelResponse[]>([]);
+  const [fpGenerating, setFpGenerating] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<'single' | 'batch' | 'meta' | 'leveled'>('single');
 
   const loadData = useCallback(async () => {
     try {
-      const [s, j] = await Promise.all([fetchStories(), fetchGenerationJobs()]);
+      const [s, j, lvls] = await Promise.all([fetchStories(), fetchGenerationJobs(), fetchFPLevels()]);
       setStories(s);
       setJobs(j);
+      setFpLevels(lvls);
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -115,6 +125,20 @@ export default function StoryManagementPage() {
     }
   };
 
+  const handleFPGenerate = async () => {
+    if (!fpTopic.trim()) return;
+    setFpGenerating(true);
+    try {
+      await generateFPStory(fpTopic.trim(), fpLevel);
+      setFpTopic('');
+      await loadData();
+    } catch (err) {
+      console.error('F&P generation failed:', err);
+    } finally {
+      setFpGenerating(false);
+    }
+  };
+
   const handleDeleteStory = async (id: string) => {
     if (!confirm('Delete this story?')) return;
     try {
@@ -158,18 +182,18 @@ export default function StoryManagementPage() {
 
         {/* Generation Section */}
         <div className="bg-white rounded-2xl shadow p-6 mb-8">
-          <div className="flex gap-2 mb-6">
-            {(['single', 'batch', 'meta'] as const).map((tab) => (
+          <div className="flex gap-2 mb-6 flex-wrap">
+            {(['single', 'batch', 'meta', 'leveled'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
                 className={`px-4 py-2 rounded-full font-medium capitalize transition ${
                   activeTab === tab
-                    ? 'bg-blue-500 text-white'
+                    ? tab === 'leveled' ? 'bg-purple-500 text-white' : 'bg-blue-500 text-white'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                 }`}
               >
-                {tab === 'single' ? 'Generate New' : tab === 'batch' ? 'Batch Generate' : 'Meta Generate'}
+                {tab === 'single' ? 'Generate New' : tab === 'batch' ? 'Batch Generate' : tab === 'meta' ? 'Meta Generate' : 'Leveled (F&P)'}
               </button>
             ))}
           </div>
@@ -270,6 +294,46 @@ export default function StoryManagementPage() {
                   {metaGenerating ? 'Generating...' : 'Generate'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'leveled' && (
+            <div className="space-y-4">
+              <input
+                type="text"
+                placeholder="Story topic (e.g., 'a brave kitten')"
+                value={fpTopic}
+                onChange={(e) => setFpTopic(e.target.value)}
+                className="w-full p-3 border rounded-xl focus:border-purple-400 focus:outline-none"
+              />
+              <div className="flex gap-4 items-center">
+                <select
+                  value={fpLevel}
+                  onChange={(e) => setFpLevel(e.target.value)}
+                  className="p-3 border rounded-xl focus:border-purple-400 focus:outline-none"
+                >
+                  {fpLevels.map(l => (
+                    <option key={l.level} value={l.level}>
+                      Level {l.level} — {l.grade_range} ({l.min_sentences}-{l.max_sentences} sentences)
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleFPGenerate}
+                  disabled={!fpTopic.trim() || fpGenerating}
+                  className="px-6 py-3 bg-purple-500 text-white rounded-xl font-bold hover:bg-purple-600 transition disabled:opacity-50"
+                >
+                  {fpGenerating ? 'Generating...' : 'Generate Leveled Story'}
+                </button>
+              </div>
+              {fpLevels.find(l => l.level === fpLevel) && (
+                <div className="text-sm text-gray-500 bg-purple-50 rounded-xl p-3">
+                  {fpLevels.find(l => l.level === fpLevel)?.description}
+                  {fpLevels.find(l => l.level === fpLevel)?.generate_images === false && (
+                    <span className="ml-2 text-orange-500 font-medium">(No images at this level)</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -12,6 +12,7 @@ def _child_from_row(row) -> ChildResponse:
         id=row["id"],
         name=row["name"],
         avatar=row["avatar"],
+        fp_level=row.get("fp_level"),
         created_at=str(row["created_at"]) if row["created_at"] else None,
     )
 

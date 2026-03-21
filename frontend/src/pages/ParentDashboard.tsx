@@ -4,9 +4,14 @@ import {
   fetchChildren,
   fetchChildSessions,
   fetchAnalytics,
+  fetchFPLevels,
+  fetchFPProgress,
+  setFPLevel,
   ChildResponse,
   SessionResponse,
   AnalyticsResponse,
+  FPLevelResponse,
+  FPProgressResponse,
 } from '../services/api';
 import AnalyticsCharts from '../components/AnalyticsCharts';
 
@@ -16,11 +21,13 @@ export default function ParentDashboard() {
   const [expandedChild, setExpandedChild] = useState<string | null>(null);
   const [childSessions, setChildSessions] = useState<Record<string, SessionResponse[]>>({});
   const [childAnalytics, setChildAnalytics] = useState<Record<string, AnalyticsResponse>>({});
+  const [fpLevels, setFpLevels] = useState<FPLevelResponse[]>([]);
+  const [childFPProgress, setChildFPProgress] = useState<Record<string, FPProgressResponse | null>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchChildren()
-      .then(setChildren)
+    Promise.all([fetchChildren(), fetchFPLevels()])
+      .then(([c, lvls]) => { setChildren(c); setFpLevels(lvls); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -40,6 +47,13 @@ export default function ParentDashboard() {
         ]);
         setChildSessions(prev => ({ ...prev, [childId]: sessions }));
         setChildAnalytics(prev => ({ ...prev, [childId]: analytics }));
+
+        // Load F&P progress
+        const child = children.find(c => c.id === childId);
+        if (child?.fp_level) {
+          const prog = await fetchFPProgress(childId).catch(() => null);
+          setChildFPProgress(prev => ({ ...prev, [childId]: prog }));
+        }
       } catch (err) {
         console.error('Failed to load child data:', err);
       }
@@ -109,7 +123,63 @@ export default function ParentDashboard() {
 
                 {expandedChild === child.id && (
                   <div className="px-6 pb-6 border-t">
-                    <div className="pt-4">
+                    {/* F&P Level Section */}
+                    <div className="pt-4 mb-4">
+                      <h3 className="text-lg font-bold text-gray-700 mb-3">Leveled Reading (F&P)</h3>
+                      <div className="bg-purple-50 rounded-xl p-4">
+                        {child.fp_level ? (
+                          <div>
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="w-10 h-10 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold text-lg">
+                                {child.fp_level}
+                              </div>
+                              <div>
+                                <div className="font-medium text-gray-700">Current Level: {child.fp_level}</div>
+                                {childFPProgress[child.id] && (
+                                  <div className="text-sm text-gray-500">
+                                    {childFPProgress[child.id]!.stories_passed}/3 passed | Avg accuracy: {Math.round((childFPProgress[child.id]!.average_accuracy || 0) * 100)}%
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <label className="text-sm text-gray-600">Override level:</label>
+                              <select
+                                value={child.fp_level}
+                                onChange={async (e) => {
+                                  try {
+                                    await setFPLevel(child.id, e.target.value);
+                                    setChildren(prev => prev.map(c =>
+                                      c.id === child.id ? { ...c, fp_level: e.target.value } : c
+                                    ));
+                                    const prog = await fetchFPProgress(child.id).catch(() => null);
+                                    setChildFPProgress(prev => ({ ...prev, [child.id]: prog }));
+                                  } catch (err) {
+                                    console.error('Failed to set level:', err);
+                                  }
+                                }}
+                                className="border rounded-lg px-2 py-1 text-sm"
+                              >
+                                {fpLevels.map(l => (
+                                  <option key={l.level} value={l.level}>
+                                    {l.level} — {l.grade_range} ({l.description?.split('—')[0]?.trim()})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-2">
+                            <p className="text-gray-500 text-sm mb-2">Not started yet</p>
+                            <p className="text-xs text-gray-400">
+                              The child can start leveled reading from the reading mode selection screen.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
                       <AnalyticsCharts
                         analytics={childAnalytics[child.id] || null}
                         sessions={childSessions[child.id] || []}
