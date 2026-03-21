@@ -5,6 +5,7 @@ interface SelectedChild {
   id: string;
   name: string;
   avatar: string;
+  total_words_read?: number;
 }
 
 interface AuthContextType {

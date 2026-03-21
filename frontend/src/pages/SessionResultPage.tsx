@@ -56,12 +56,20 @@ export default function SessionResultPage() {
       <div className="min-h-screen bg-green-50 flex items-center justify-center">
         <div className="text-center">
           <p className="text-2xl text-gray-600">Session not found</p>
-          <button
-            onClick={() => navigate('/library')}
-            className="mt-4 px-6 py-2 bg-blue-500 text-white rounded-full"
-          >
-            Back to Library
-          </button>
+          <div className="flex gap-3 mt-4 justify-center">
+            <button
+              onClick={() => navigate('/leveled')}
+              className="px-6 py-2 bg-purple-500 text-white rounded-full"
+            >
+              Leveled Reading
+            </button>
+            <button
+              onClick={() => navigate('/library')}
+              className="px-6 py-2 bg-blue-500 text-white rounded-full"
+            >
+              Library
+            </button>
+          </div>
         </div>
       </div>
     );

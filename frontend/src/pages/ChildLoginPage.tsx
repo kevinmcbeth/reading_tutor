@@ -32,7 +32,7 @@ export default function ChildLoginPage() {
   const [selectedChildForMode, setSelectedChildForMode] = useState<ChildResponse | null>(null);
 
   const handleSelectChild = (child: ChildResponse) => {
-    selectChild({ id: child.id, name: child.name, avatar: child.avatar || '' });
+    selectChild({ id: child.id, name: child.name, avatar: child.avatar || '', total_words_read: child.total_words_read });
     setSelectedChildForMode(child);
   };
 

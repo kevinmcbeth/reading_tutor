@@ -388,7 +388,7 @@ export default function ReadingPage() {
       {/* Bottom bar */}
       <div className="p-4 bg-white shadow-inner flex justify-between items-center">
         <button
-          onClick={() => navigate('/library')}
+          onClick={() => navigate(story?.fp_level ? '/leveled' : '/library')}
           className="text-gray-400 hover:text-gray-600 px-4 py-2 rounded-full transition"
         >
           &larr; Quit

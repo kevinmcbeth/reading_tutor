@@ -47,6 +47,11 @@ export default function StoryLibraryPage() {
         <div className="flex items-center gap-3">
           <span className="text-3xl">{childAvatar}</span>
           <span className="text-2xl font-bold text-gray-700">{childName}</span>
+          {selectedChild?.total_words_read != null && selectedChild.total_words_read > 0 && (
+            <span className="text-sm text-green-600 font-medium bg-green-50 px-3 py-1 rounded-full">
+              {selectedChild.total_words_read.toLocaleString()} words read
+            </span>
+          )}
         </div>
       </div>
 
