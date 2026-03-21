@@ -13,9 +13,9 @@ export default function ParentLoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // If already authenticated, redirect to dashboard
+  // If already authenticated, go straight to child selection
   if (isAuthenticated) {
-    navigate('/parent/dashboard', { replace: true });
+    navigate('/', { replace: true });
     return null;
   }
 
@@ -32,7 +32,7 @@ export default function ParentLoginPage() {
       } else {
         await login(username.trim(), password);
       }
-      navigate('/parent/dashboard');
+      navigate('/');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
     } finally {

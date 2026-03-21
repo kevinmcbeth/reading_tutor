@@ -278,7 +278,7 @@ async def run_story_generation(
         await log_generation(job_id, "info", "Image prompts generated")
 
         # GPU memory management — only needed in local mode
-        if is_local and not settings.USE_MOCK_SERVICES:
+        if is_local:
             await _unload_ollama_model()
             await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
 
@@ -286,7 +286,7 @@ async def run_story_generation(
         if await _check_cancelled(job_id):
             return
 
-        if is_local and not settings.USE_MOCK_SERVICES:
+        if is_local:
             await log_generation(job_id, "info", "Starting ComfyUI for image generation")
             await _manage_comfyui("start")
 
@@ -315,6 +315,7 @@ async def run_story_generation(
             storage_key = f"stories/{story_uuid}/images/sentence_{s_idx}.png"
 
             if settings.STORAGE_BACKEND == "s3":
+                # ComfyUI generates to a temp file, then upload to S3
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp_path = tmp.name
@@ -366,7 +367,7 @@ async def run_story_generation(
                 await _update_job(job_id, progress_pct=pct)
 
         # Stop ComfyUI — only in local mode
-        if is_local and not settings.USE_MOCK_SERVICES:
+        if is_local:
             await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
             await _manage_comfyui("stop")
 
@@ -539,6 +540,8 @@ async def run_fp_story_generation(
 ) -> None:
     """Run the full F&P story generation pipeline."""
     pool = get_pool()
+    llm = _get_llm_client()
+    is_local = _is_local_mode()
 
     try:
         # Load level definition
@@ -547,7 +550,7 @@ async def run_fp_story_generation(
         )
         if not level_row:
             await log_generation(job_id, "error", f"Unknown F&P level: {fp_level}")
-            await _update_job(job_id, status="failed", completed_at=datetime.utcnow())
+            await _update_job(job_id, status="failed", completed_at=datetime.now(timezone.utc))
             await _update_story(story_id, status="failed")
             return
 
@@ -568,10 +571,11 @@ async def run_fp_story_generation(
         await _update_job(job_id, status="generating_text")
 
         try:
+            from services import ollama_client
             story_data = await ollama_client.generate_fp_story(topic, level_data)
         except Exception as exc:
             await log_generation(job_id, "error", f"Story text generation failed: {exc}")
-            await _update_job(job_id, status="failed", completed_at=datetime.utcnow())
+            await _update_job(job_id, status="failed", completed_at=datetime.now(timezone.utc))
             await _update_story(story_id, status="failed")
             return
 
@@ -626,6 +630,7 @@ async def run_fp_story_generation(
                 return
 
             try:
+                from services import ollama_client
                 image_prompts = await ollama_client.generate_fp_image_prompts(
                     " ".join(sr["text"] for sr in sentence_records),
                     style,
@@ -649,15 +654,19 @@ async def run_fp_story_generation(
                     )
 
             await log_generation(job_id, "info", "Image prompts generated")
-            await _unload_ollama_model()
-            await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
+
+            if is_local:
+                await _unload_ollama_model()
+                await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
 
             # --- Stage 3: Generate images ---
             if await _check_cancelled(job_id):
                 return
 
-            await log_generation(job_id, "info", "Starting ComfyUI for image generation")
-            await _manage_comfyui("start")
+            if is_local:
+                await log_generation(job_id, "info", "Starting ComfyUI for image generation")
+                await _manage_comfyui("start")
+
             await _update_job(job_id, status="generating_images")
             images_dir = Path(settings.data_path) / "stories" / story_uuid / "images"
             images_dir.mkdir(parents=True, exist_ok=True)
@@ -693,11 +702,13 @@ async def run_fp_story_generation(
                     pct = ((i + 1) / total_tasks) * 60
                     await _update_job(job_id, progress_pct=pct)
 
-            await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
-            await _manage_comfyui("stop")
+            if is_local:
+                await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
+                await _manage_comfyui("stop")
         else:
             # No images — skip straight to audio
-            await _unload_ollama_model()
+            if is_local:
+                await _unload_ollama_model()
             await log_generation(job_id, "info", f"Level {fp_level}: skipping image generation (images disabled)")
 
         # --- Stage 4: Generate audio ---
@@ -717,6 +728,8 @@ async def run_fp_story_generation(
 
         total_audio = len(all_words) + len(sentence_records)
         completed_audio = 0
+
+        from services import tts_service
 
         for word_row in all_words:
             if await _check_cancelled(job_id):
@@ -749,24 +762,27 @@ async def run_fp_story_generation(
 
         # --- Complete ---
         await _update_job(
-            job_id, status="completed", progress_pct=100, completed_at=datetime.utcnow(),
+            job_id, status="completed", progress_pct=100,
+            completed_at=datetime.now(timezone.utc),
         )
         await _update_story(story_id, status="ready")
-        await tts_service.unload_tts_async()
-        await log_generation(job_id, "info", "TTS model unloaded")
-        await _preload_ollama_model()
+
+        if is_local:
+            await tts_service.unload_tts_async()
+            await log_generation(job_id, "info", "TTS model unloaded")
+            await _preload_ollama_model()
+
         await log_generation(job_id, "info", f"F&P Level {fp_level} story generation complete")
 
     except Exception as exc:
         await log_generation(job_id, "error", f"Pipeline error: {exc}")
-        await _update_job(job_id, status="failed", completed_at=datetime.utcnow())
+        await _update_job(job_id, status="failed", completed_at=datetime.now(timezone.utc))
         await _update_story(story_id, status="failed")
 
 
 async def run_batch_generation(prompts: list[dict]) -> list[int]:
     """Create jobs for each prompt and run them serially. Returns list of job IDs."""
     pool = get_pool()
-    llm = _get_llm_client()
     job_ids = []
 
     async with pool.acquire() as conn:

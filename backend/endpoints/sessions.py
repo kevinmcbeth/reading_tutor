@@ -35,7 +35,7 @@ def _session_from_row(row) -> SessionResponse:
     )
 
 
-@router.post("/", response_model=SessionResponse, status_code=201)
+@router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
     session: SessionCreate, family_id: int = Depends(get_current_family)
 ):

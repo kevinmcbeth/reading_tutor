@@ -162,7 +162,7 @@ def _job_from_row(row) -> GenerationJobResponse:
     )
 
 
-@router.get("/", response_model=list[StoryResponse])
+@router.get("", response_model=list[StoryResponse])
 async def list_stories(
     difficulty: Optional[str] = Query(None),
     theme: Optional[str] = Query(None),

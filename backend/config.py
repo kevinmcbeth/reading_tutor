@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     JWT_REFRESH_EXPIRES_DAYS: int = 90
 
     # Redis
-    REDIS_URL: str = "redis://localhost:6379"
+    REDIS_URL: str = "redis://localhost:6380"
 
     # AWS / Cloud settings
     LLM_BACKEND: str = "ollama"  # "ollama" or "bedrock"

@@ -23,7 +23,7 @@ def _child_from_row(row) -> ChildResponse:
     )
 
 
-@router.get("/", response_model=list[ChildResponse])
+@router.get("", response_model=list[ChildResponse])
 async def list_children(
     family_id: int = Depends(get_current_family),
     limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
@@ -78,7 +78,7 @@ async def leaderboard(family_id: int = Depends(get_current_family)):
     ]
 
 
-@router.post("/", response_model=ChildResponse, status_code=201)
+@router.post("", response_model=ChildResponse, status_code=201)
 async def create_child(
     child: ChildCreate, family_id: int = Depends(get_current_family)
 ):
