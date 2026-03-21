@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from auth import get_current_family
 from models.api_models import SpeechRecognitionResponse
 from rate_limit import check_rate_limit
-from services.whisper_service import transcribe_async
+from services.resolver import transcribe_async
 
 router = APIRouter(prefix="/api/speech", tags=["speech"])
 

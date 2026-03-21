@@ -1,3 +1,4 @@
+from collections import defaultdict
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -6,7 +7,9 @@ from auth import get_current_family
 from database import get_pool
 from models.api_models import (
     BatchPrompt,
+    DEFAULT_PAGE_LIMIT,
     GenerationJobResponse,
+    MAX_PAGE_LIMIT,
     MetaPrompt,
     SentenceResponse,
     StoryPrompt,
@@ -19,20 +22,38 @@ router = APIRouter(prefix="/api/stories", tags=["stories"])
 
 
 async def _build_story_response(pool, story_row) -> StoryResponse:
-    """Build a full StoryResponse with sentences and words."""
+    """Build a full StoryResponse with sentences and words in 2 queries."""
+    story_id = story_row["id"]
+
     sentence_rows = await pool.fetch(
         "SELECT * FROM story_sentences WHERE story_id = $1 ORDER BY idx",
-        story_row["id"],
+        story_id,
     )
 
-    sentences = []
-    for s in sentence_rows:
-        word_rows = await pool.fetch(
-            "SELECT * FROM story_words WHERE sentence_id = $1 ORDER BY idx",
-            s["id"],
+    if not sentence_rows:
+        return StoryResponse(
+            id=story_id,
+            title=story_row["title"],
+            topic=story_row["topic"],
+            difficulty=story_row["difficulty"],
+            theme=story_row["theme"],
+            style=story_row["style"],
+            status=story_row["status"],
+            sentences=[],
         )
 
-        words = [
+    sentence_ids = [s["id"] for s in sentence_rows]
+
+    # Fetch all words for all sentences in one query
+    word_rows = await pool.fetch(
+        "SELECT * FROM story_words WHERE sentence_id = ANY($1) ORDER BY sentence_id, idx",
+        sentence_ids,
+    )
+
+    # Group words by sentence_id
+    words_by_sentence: dict[int, list] = defaultdict(list)
+    for w in word_rows:
+        words_by_sentence[w["sentence_id"]].append(
             WordResponse(
                 id=w["id"],
                 idx=w["idx"],
@@ -40,21 +61,22 @@ async def _build_story_response(pool, story_row) -> StoryResponse:
                 has_audio=w["has_audio"],
                 is_challenge_word=w["is_challenge_word"],
             )
-            for w in word_rows
-        ]
-        sentences.append(
-            SentenceResponse(
-                id=s["id"],
-                idx=s["idx"],
-                text=s["text"],
-                image_path=s["image_path"],
-                has_image=s["has_image"],
-                words=words,
-            )
         )
 
+    sentences = [
+        SentenceResponse(
+            id=s["id"],
+            idx=s["idx"],
+            text=s["text"],
+            image_path=s["image_path"],
+            has_image=s["has_image"],
+            words=words_by_sentence.get(s["id"], []),
+        )
+        for s in sentence_rows
+    ]
+
     return StoryResponse(
-        id=story_row["id"],
+        id=story_id,
         title=story_row["title"],
         topic=story_row["topic"],
         difficulty=story_row["difficulty"],
@@ -64,6 +86,69 @@ async def _build_story_response(pool, story_row) -> StoryResponse:
         status=story_row["status"],
         sentences=sentences,
     )
+
+
+async def _build_story_responses_batch(pool, story_rows) -> list[StoryResponse]:
+    """Build StoryResponses for multiple stories in 2 bulk queries (not N+1)."""
+    if not story_rows:
+        return []
+
+    story_ids = [r["id"] for r in story_rows]
+
+    # Bulk fetch all sentences
+    all_sentences = await pool.fetch(
+        "SELECT * FROM story_sentences WHERE story_id = ANY($1) ORDER BY story_id, idx",
+        story_ids,
+    )
+
+    if not all_sentences:
+        return [
+            StoryResponse(
+                id=r["id"], title=r["title"], topic=r["topic"],
+                difficulty=r["difficulty"], theme=r["theme"],
+                style=r["style"], status=r["status"], sentences=[],
+            )
+            for r in story_rows
+        ]
+
+    sentence_ids = [s["id"] for s in all_sentences]
+
+    # Bulk fetch all words
+    all_words = await pool.fetch(
+        "SELECT * FROM story_words WHERE sentence_id = ANY($1) ORDER BY sentence_id, idx",
+        sentence_ids,
+    )
+
+    # Group words by sentence_id
+    words_by_sentence: dict[int, list] = defaultdict(list)
+    for w in all_words:
+        words_by_sentence[w["sentence_id"]].append(
+            WordResponse(
+                id=w["id"], idx=w["idx"], text=w["text"],
+                has_audio=w["has_audio"], is_challenge_word=w["is_challenge_word"],
+            )
+        )
+
+    # Group sentences by story_id
+    sentences_by_story: dict[int, list] = defaultdict(list)
+    for s in all_sentences:
+        sentences_by_story[s["story_id"]].append(
+            SentenceResponse(
+                id=s["id"], idx=s["idx"], text=s["text"],
+                image_path=s["image_path"], has_image=s["has_image"],
+                words=words_by_sentence.get(s["id"], []),
+            )
+        )
+
+    return [
+        StoryResponse(
+            id=r["id"], title=r["title"], topic=r["topic"],
+            difficulty=r["difficulty"], theme=r["theme"],
+            style=r["style"], status=r["status"],
+            sentences=sentences_by_story.get(r["id"], []),
+        )
+        for r in story_rows
+    ]
 
 
 def _job_from_row(row) -> GenerationJobResponse:
@@ -81,6 +166,8 @@ def _job_from_row(row) -> GenerationJobResponse:
 async def list_stories(
     difficulty: Optional[str] = Query(None),
     theme: Optional[str] = Query(None),
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
     family_id: int = Depends(get_current_family),
 ):
     pool = get_pool()
@@ -96,13 +183,11 @@ async def list_stories(
         query += f" AND theme = ${idx}"
         params.append(theme)
         idx += 1
-    query += " ORDER BY created_at DESC"
+    query += f" ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}"
+    params.extend([limit, offset])
 
     rows = await pool.fetch(query, *params)
-    results = []
-    for row in rows:
-        results.append(await _build_story_response(pool, row))
-    return results
+    return await _build_story_responses_batch(pool, rows)
 
 
 @router.get("/{story_id}", response_model=StoryResponse)

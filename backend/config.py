@@ -1,8 +1,12 @@
+import logging
+import os
 import secrets
 from pathlib import Path
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -18,6 +22,8 @@ class Settings(BaseSettings):
 
     # PostgreSQL
     DATABASE_URL: str = "postgresql://reading_tutor:password@localhost:5432/reading_tutor"
+    DB_POOL_MIN: int = 5
+    DB_POOL_MAX: int = 20
 
     # JWT Authentication
     JWT_SECRET: str = ""
@@ -39,15 +45,25 @@ class Settings(BaseSettings):
     TTS_BACKEND: str = "local"  # "local" or "remote"
     TTS_URL: str = "http://tts.gpu.svc.cluster.local:8080"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    # Mock services (for testing without GPU)
+    USE_MOCK_SERVICES: bool = False
+
+    # Request timeout (seconds)
+    REQUEST_TIMEOUT: int = 30
+
+    model_config = {
+        "env_file": os.environ.get("ENV_FILE", ".env"),
+        "env_file_encoding": "utf-8",
+    }
 
     @model_validator(mode="after")
     def ensure_jwt_secret(self):
         if not self.JWT_SECRET:
             self.JWT_SECRET = secrets.token_urlsafe(32)
-            env_path = Path(__file__).parent / ".env"
-            with open(env_path, "a") as f:
-                f.write(f"JWT_SECRET={self.JWT_SECRET}\n")
+            logger.warning(
+                "JWT_SECRET not set — generated a random secret. "
+                "Set JWT_SECRET in your .env file for multi-process deployments."
+            )
         return self
 
     @property

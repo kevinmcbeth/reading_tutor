@@ -1,11 +1,17 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_family
 from database import get_pool
-from models.api_models import SessionComplete, SessionCreate, SessionResponse
+from models.api_models import (
+    DEFAULT_PAGE_LIMIT,
+    MAX_PAGE_LIMIT,
+    SessionComplete,
+    SessionCreate,
+    SessionResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +193,10 @@ async def complete_session(
 
 @router.get("/child/{child_id}", response_model=list[SessionResponse])
 async def list_child_sessions(
-    child_id: int, family_id: int = Depends(get_current_family)
+    child_id: int,
+    family_id: int = Depends(get_current_family),
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
 ):
     pool = get_pool()
 
@@ -200,7 +209,7 @@ async def list_child_sessions(
         raise HTTPException(status_code=403, detail="Child does not belong to your family")
 
     rows = await pool.fetch(
-        "SELECT * FROM sessions WHERE child_id = $1 ORDER BY id DESC",
-        child_id,
+        "SELECT * FROM sessions WHERE child_id = $1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+        child_id, limit, offset,
     )
     return [_session_from_row(r) for r in rows]

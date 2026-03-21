@@ -278,7 +278,7 @@ async def run_story_generation(
         await log_generation(job_id, "info", "Image prompts generated")
 
         # GPU memory management — only needed in local mode
-        if is_local:
+        if is_local and not settings.USE_MOCK_SERVICES:
             await _unload_ollama_model()
             await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
 
@@ -286,7 +286,7 @@ async def run_story_generation(
         if await _check_cancelled(job_id):
             return
 
-        if is_local:
+        if is_local and not settings.USE_MOCK_SERVICES:
             await log_generation(job_id, "info", "Starting ComfyUI for image generation")
             await _manage_comfyui("start")
 
@@ -315,7 +315,6 @@ async def run_story_generation(
             storage_key = f"stories/{story_uuid}/images/sentence_{s_idx}.png"
 
             if settings.STORAGE_BACKEND == "s3":
-                # ComfyUI generates to a temp file, then upload to S3
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp_path = tmp.name
@@ -367,7 +366,7 @@ async def run_story_generation(
                 await _update_job(job_id, progress_pct=pct)
 
         # Stop ComfyUI — only in local mode
-        if is_local:
+        if is_local and not settings.USE_MOCK_SERVICES:
             await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
             await _manage_comfyui("stop")
 
@@ -497,7 +496,7 @@ async def run_story_generation(
         await _update_story(story_id, status="ready")
 
         # Cleanup: unload models in local mode
-        if is_local:
+        if is_local and not settings.USE_MOCK_SERVICES:
             from services import tts_service
             await tts_service.unload_tts_async()
             await log_generation(job_id, "info", "TTS model unloaded")

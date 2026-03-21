@@ -1,8 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_family
 from database import get_pool
-from models.api_models import GenerationJobResponse, GenerationLogResponse
+from models.api_models import (
+    DEFAULT_PAGE_LIMIT,
+    GenerationJobResponse,
+    GenerationLogResponse,
+    MAX_PAGE_LIMIT,
+)
 
 router = APIRouter(prefix="/api/generation", tags=["generation"])
 
@@ -19,14 +24,19 @@ def _job_from_row(row) -> GenerationJobResponse:
 
 
 @router.get("/jobs", response_model=list[GenerationJobResponse])
-async def list_jobs(family_id: int = Depends(get_current_family)):
+async def list_jobs(
+    family_id: int = Depends(get_current_family),
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+):
     pool = get_pool()
     rows = await pool.fetch(
         """SELECT gj.* FROM generation_jobs gj
            JOIN stories s ON gj.story_id = s.id
            WHERE s.family_id = $1
-           ORDER BY gj.created_at DESC""",
-        family_id,
+           ORDER BY gj.created_at DESC
+           LIMIT $2 OFFSET $3""",
+        family_id, limit, offset,
     )
     return [_job_from_row(r) for r in rows]
 

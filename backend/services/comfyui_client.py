@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 WORKFLOW_PATH = Path(__file__).parent.parent / "workflows" / "txt2img_children.json"
 
 MAX_POLL_TIME = 300  # 5 minutes
-POLL_INTERVAL = 2  # seconds
+POLL_INTERVAL_INITIAL = 1  # seconds
+POLL_INTERVAL_MAX = 10  # seconds
+POLL_BACKOFF_FACTOR = 1.5
 
 
 def _build_workflow(
@@ -94,7 +96,7 @@ async def generate_image(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             # Queue the prompt
             resp = await client.post(
                 f"{settings.COMFYUI_URL}/prompt",
@@ -103,11 +105,13 @@ async def generate_image(
             resp.raise_for_status()
             prompt_id = resp.json()["prompt_id"]
 
-            # Poll for completion
+            # Poll for completion with exponential backoff
             elapsed = 0.0
+            interval = POLL_INTERVAL_INITIAL
             while elapsed < MAX_POLL_TIME:
-                await asyncio.sleep(POLL_INTERVAL)
-                elapsed += POLL_INTERVAL
+                await asyncio.sleep(interval)
+                elapsed += interval
+                interval = min(interval * POLL_BACKOFF_FACTOR, POLL_INTERVAL_MAX)
 
                 hist_resp = await client.get(
                     f"{settings.COMFYUI_URL}/history/{prompt_id}"

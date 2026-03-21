@@ -1,0 +1,26 @@
+{
+  "title": "The Brave Little Fox",
+  "style": "cartoon",
+  "sentences": [
+    {
+      "text": "Once upon a time there was a brave little fox.",
+      "challenge_words": [7, 8]
+    },
+    {
+      "text": "The fox loved to explore the dark forest.",
+      "challenge_words": [3, 6, 7]
+    },
+    {
+      "text": "One day the fox found a sparkling river.",
+      "challenge_words": [5, 6]
+    },
+    {
+      "text": "The water was clear and very cold.",
+      "challenge_words": [3, 5, 6]
+    },
+    {
+      "text": "The fox jumped across the stones happily.",
+      "challenge_words": [2, 3, 5, 6]
+    }
+  ]
+}

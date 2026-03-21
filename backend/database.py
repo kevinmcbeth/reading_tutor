@@ -123,6 +123,16 @@ CREATE TABLE IF NOT EXISTS fp_progress (
     completed_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Foreign key indexes for JOIN/WHERE performance
+CREATE INDEX IF NOT EXISTS idx_children_family_id ON children(family_id);
+CREATE INDEX IF NOT EXISTS idx_stories_family_id_status ON stories(family_id, status);
+CREATE INDEX IF NOT EXISTS idx_story_sentences_story_id ON story_sentences(story_id);
+CREATE INDEX IF NOT EXISTS idx_story_words_sentence_id ON story_words(sentence_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_child_id ON sessions(child_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_story_id ON sessions(story_id);
+CREATE INDEX IF NOT EXISTS idx_session_words_session_id ON session_words(session_id);
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_story_id ON generation_jobs(story_id);
+CREATE INDEX IF NOT EXISTS idx_generation_logs_job_id ON generation_logs(job_id);
 CREATE INDEX IF NOT EXISTS idx_fp_progress_child_level ON fp_progress(child_id, fp_level);
 CREATE INDEX IF NOT EXISTS idx_stories_fp_level ON stories(fp_level);
 """
@@ -182,7 +192,11 @@ async def seed_fp_levels(conn) -> None:
 async def init_db() -> None:
     """Initialize the database connection pool and create tables."""
     global _pool
-    _pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=2, max_size=20)
+    _pool = await asyncpg.create_pool(
+        settings.DATABASE_URL,
+        min_size=settings.DB_POOL_MIN,
+        max_size=settings.DB_POOL_MAX,
+    )
     async with _pool.acquire() as conn:
         await conn.execute(SCHEMA)
         await seed_fp_levels(conn)

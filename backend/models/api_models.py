@@ -191,6 +191,12 @@ class AnalyticsResponse(BaseModel):
     commonly_missed_words: list[dict]
 
 
+# --- Pagination ---
+
+DEFAULT_PAGE_LIMIT = 50
+MAX_PAGE_LIMIT = 200
+
+
 # --- Speech recognition ---
 
 class SpeechRecognitionResponse(BaseModel):

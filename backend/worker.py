@@ -72,9 +72,9 @@ class WorkerSettings:
     functions = [generate_story_task, generate_fp_story_task]
     on_startup = startup
     on_shutdown = shutdown
-    max_jobs = 1
-    job_timeout = timedelta(minutes=10)      # max time per job
-    max_job_retries = 1                      # retry once on failure
-    queue_read_limit = 1                     # read one job at a time
-    keep_result = timedelta(hours=24)        # keep results for 24h
+    max_jobs = 4
+    job_timeout = timedelta(minutes=30)
+    max_job_retries = 3
+    queue_read_limit = 4
+    keep_result = timedelta(hours=24)
     redis_settings = _parse_redis_settings(settings.REDIS_URL)

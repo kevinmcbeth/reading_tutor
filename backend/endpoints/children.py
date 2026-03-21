@@ -1,8 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_family
 from database import get_pool
-from models.api_models import ChildCreate, ChildResponse, LeaderboardEntry
+from models.api_models import (
+    ChildCreate,
+    ChildResponse,
+    DEFAULT_PAGE_LIMIT,
+    LeaderboardEntry,
+    MAX_PAGE_LIMIT,
+)
 
 router = APIRouter(prefix="/api/children", tags=["children"])
 
@@ -18,23 +24,29 @@ def _child_from_row(row) -> ChildResponse:
 
 
 @router.get("/", response_model=list[ChildResponse])
-async def list_children(family_id: int = Depends(get_current_family)):
+async def list_children(
+    family_id: int = Depends(get_current_family),
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+):
     pool = get_pool()
     rows = await pool.fetch(
-        "SELECT * FROM children WHERE family_id = $1 ORDER BY name", family_id
+        """SELECT c.*,
+                  COALESCE(SUM(s.score), 0) AS total_words_read,
+                  COUNT(s.id) AS total_sessions
+           FROM children c
+           LEFT JOIN sessions s ON s.child_id = c.id AND s.completed_at IS NOT NULL
+           WHERE c.family_id = $1
+           GROUP BY c.id
+           ORDER BY c.name
+           LIMIT $2 OFFSET $3""",
+        family_id, limit, offset,
     )
     results = []
     for r in rows:
-        stats = await pool.fetchrow(
-            """SELECT COALESCE(SUM(score), 0) as total_words,
-                      COUNT(*) as total_sessions
-               FROM sessions
-               WHERE child_id = $1 AND completed_at IS NOT NULL""",
-            r["id"],
-        )
         child = _child_from_row(r)
-        child.total_words_read = stats["total_words"]
-        child.total_sessions = stats["total_sessions"]
+        child.total_words_read = r["total_words_read"]
+        child.total_sessions = r["total_sessions"]
         results.append(child)
     return results
 
