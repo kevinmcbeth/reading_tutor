@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class Difficulty(str, Enum):
@@ -21,6 +21,15 @@ class StoryPrompt(BaseModel):
 
 class BatchPrompt(BaseModel):
     prompts: list[StoryPrompt]
+
+    @field_validator("prompts")
+    @classmethod
+    def limit_prompts(cls, v: list) -> list:
+        if len(v) > 20:
+            raise ValueError("Maximum 20 prompts per batch")
+        if len(v) == 0:
+            raise ValueError("At least one prompt is required")
+        return v
 
 
 class MetaPrompt(BaseModel):
@@ -132,6 +141,27 @@ class FamilyCreate(BaseModel):
     username: str
     password: str
     display_name: Optional[str] = None
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) < 3 or len(v) > 50:
+            raise ValueError("Username must be between 3 and 50 characters")
+        if not v.replace("_", "").replace("-", "").isalnum():
+            raise ValueError("Username may only contain letters, numbers, hyphens, and underscores")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(v) > 128:
+            raise ValueError("Password must be at most 128 characters")
+        if v.isalpha() or v.isdigit():
+            raise ValueError("Password must contain both letters and numbers or special characters")
+        return v
 
 
 class FamilyLogin(BaseModel):

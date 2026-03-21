@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -88,6 +88,25 @@ async def complete_session(
     if not session_row:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    if session_row["completed_at"] is not None:
+        raise HTTPException(status_code=400, detail="Session already completed")
+
+    # Validate that all word_ids belong to this session's story
+    valid_word_ids = await pool.fetch(
+        """SELECT sw.id FROM story_words sw
+           JOIN story_sentences ss ON sw.sentence_id = ss.id
+           WHERE ss.story_id = $1""",
+        session_row["story_id"],
+    )
+    valid_ids = {r["id"] for r in valid_word_ids}
+    submitted_ids = {r.word_id for r in data.results}
+    invalid_ids = submitted_ids - valid_ids
+    if invalid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid word IDs for this story: {sorted(invalid_ids)}",
+        )
+
     score = 0
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -100,7 +119,7 @@ async def complete_session(
                 if result.correct:
                     score += 1
 
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             await conn.execute(
                 "UPDATE sessions SET score = $1, completed_at = $2 WHERE id = $3",
                 score, now, session_id,

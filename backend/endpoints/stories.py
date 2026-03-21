@@ -122,6 +122,7 @@ async def generate_story(
     request: Request,
     family_id: int = Depends(get_current_family),
 ):
+    await check_rate_limit(request.app.state.redis, family_id, "generation", 10, 3600)
 
     pool = get_pool()
 
@@ -158,6 +159,7 @@ async def generate_batch(
     request: Request,
     family_id: int = Depends(get_current_family),
 ):
+    await check_rate_limit(request.app.state.redis, family_id, "generation", 10, 3600)
 
     pool = get_pool()
     jobs = []
@@ -198,6 +200,7 @@ async def generate_meta(
     request: Request,
     family_id: int = Depends(get_current_family),
 ):
+    await check_rate_limit(request.app.state.redis, family_id, "generation", 10, 3600)
 
     pool = get_pool()
 

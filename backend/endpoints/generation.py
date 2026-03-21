@@ -22,7 +22,11 @@ def _job_from_row(row) -> GenerationJobResponse:
 async def list_jobs(family_id: int = Depends(get_current_family)):
     pool = get_pool()
     rows = await pool.fetch(
-        "SELECT * FROM generation_jobs ORDER BY created_at DESC",
+        """SELECT gj.* FROM generation_jobs gj
+           JOIN stories s ON gj.story_id = s.id
+           WHERE s.family_id = $1
+           ORDER BY gj.created_at DESC""",
+        family_id,
     )
     return [_job_from_row(r) for r in rows]
 
@@ -46,7 +50,10 @@ async def get_job_logs(job_id: int, family_id: int = Depends(get_current_family)
     pool = get_pool()
 
     job = await pool.fetchrow(
-        "SELECT id FROM generation_jobs WHERE id = $1", job_id
+        """SELECT gj.id FROM generation_jobs gj
+           JOIN stories s ON gj.story_id = s.id
+           WHERE gj.id = $1 AND s.family_id = $2""",
+        job_id, family_id,
     )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")

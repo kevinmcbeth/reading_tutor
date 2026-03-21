@@ -47,10 +47,12 @@ async def leaderboard(family_id: int = Depends(get_current_family)):
                   COUNT(s.id) as total_sessions
            FROM children c
            LEFT JOIN sessions s ON s.child_id = c.id AND s.completed_at IS NOT NULL
+           WHERE c.family_id = $1
            GROUP BY c.id, c.name, c.avatar
            HAVING COALESCE(SUM(s.score), 0) > 0
            ORDER BY total_words DESC
            LIMIT 20""",
+        family_id,
     )
     return [
         LeaderboardEntry(

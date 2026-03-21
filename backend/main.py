@@ -37,14 +37,20 @@ async def lifespan(app: FastAPI):
     await close_db()
 
 
-app = FastAPI(title="Reading Tutor", lifespan=lifespan)
+app = FastAPI(
+    title="Reading Tutor",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.FRONTEND_URL],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(parent.auth_router)

@@ -2,7 +2,7 @@ import asyncio
 import logging
 import re
 import uuid as uuid_mod
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import settings
@@ -34,9 +34,16 @@ async def log_generation(job_id: int, level: str, message: str) -> None:
     log_fn("[job=%d] %s", job_id, message)
 
 
+_ALLOWED_JOB_COLUMNS = {"status", "progress_pct", "completed_at"}
+_ALLOWED_STORY_COLUMNS = {"title", "style", "uuid", "status"}
+
+
 async def _update_job(job_id: int, **kwargs) -> None:
-    """Update generation_jobs fields."""
+    """Update generation_jobs fields (whitelisted columns only)."""
     pool = get_pool()
+    invalid = set(kwargs) - _ALLOWED_JOB_COLUMNS
+    if invalid:
+        raise ValueError(f"Invalid job columns: {invalid}")
     sets = []
     vals = []
     for i, (k, v) in enumerate(kwargs.items(), 1):
@@ -50,8 +57,11 @@ async def _update_job(job_id: int, **kwargs) -> None:
 
 
 async def _update_story(story_id: int, **kwargs) -> None:
-    """Update stories fields."""
+    """Update stories fields (whitelisted columns only)."""
     pool = get_pool()
+    invalid = set(kwargs) - _ALLOWED_STORY_COLUMNS
+    if invalid:
+        raise ValueError(f"Invalid story columns: {invalid}")
     sets = []
     vals = []
     for i, (k, v) in enumerate(kwargs.items(), 1):
@@ -159,7 +169,7 @@ async def run_story_generation(
         except Exception as exc:
             await log_generation(job_id, "error", f"Story text generation failed: {exc}")
             await _update_job(
-                job_id, status="failed", completed_at=datetime.utcnow()
+                job_id, status="failed", completed_at=datetime.now(timezone.utc)
             )
             await _update_story(story_id, status="failed")
             return
@@ -386,7 +396,7 @@ async def run_story_generation(
             job_id,
             status="completed",
             progress_pct=100,
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(timezone.utc),
         )
         await _update_story(story_id, status="ready")
         # Unload TTS and reload Ollama so it's warm for next request
@@ -398,7 +408,7 @@ async def run_story_generation(
     except Exception as exc:
         await log_generation(job_id, "error", f"Pipeline error: {exc}")
         await _update_job(
-            job_id, status="failed", completed_at=datetime.utcnow()
+            job_id, status="failed", completed_at=datetime.now(timezone.utc)
         )
         await _update_story(story_id, status="failed")
 

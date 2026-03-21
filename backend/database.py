@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS children (
     family_id INTEGER REFERENCES families(id) NOT NULL,
     name TEXT NOT NULL,
     avatar TEXT,
-    pin TEXT,
+    pin_hash TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
