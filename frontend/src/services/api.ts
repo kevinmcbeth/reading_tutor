@@ -115,12 +115,18 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
-export async function fetchStories(difficulty?: string, theme?: string): Promise<StoryResponse[]> {
+export async function fetchStories(
+  difficulty?: string,
+  theme?: string,
+  limit: number = 50,
+  offset: number = 0,
+): Promise<StoryResponse[]> {
   const params = new URLSearchParams();
   if (difficulty) params.set('difficulty', difficulty);
   if (theme) params.set('theme', theme);
-  const query = params.toString();
-  return fetchJson<StoryResponse[]>(`/stories${query ? `?${query}` : ''}`);
+  params.set('limit', String(limit));
+  params.set('offset', String(offset));
+  return fetchJson<StoryResponse[]>(`/stories?${params.toString()}`);
 }
 
 export async function fetchStory(id: string): Promise<StoryResponse> {

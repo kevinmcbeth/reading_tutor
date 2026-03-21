@@ -18,6 +18,7 @@ from models.api_models import (
     RefreshRequest,
     TokenResponse,
 )
+from rate_limit import check_rate_limit_by_ip
 
 from jose import JWTError, jwt
 from config import settings
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/api/parent", tags=["parent"])
 
 @auth_router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(data: FamilyCreate, request: Request):
+    await check_rate_limit_by_ip(request.app.state.redis, request, "register", 5, 3600)
     pool = get_pool()
 
     existing = await pool.fetchrow(
@@ -59,6 +61,7 @@ async def register(data: FamilyCreate, request: Request):
 
 @auth_router.post("/login", response_model=TokenResponse)
 async def login(data: FamilyLogin, request: Request):
+    await check_rate_limit_by_ip(request.app.state.redis, request, "login", 10, 900)
     pool = get_pool()
 
     row = await pool.fetchrow(
@@ -180,9 +183,51 @@ async def get_all_analytics(family_id: int = Depends(get_current_family)):
     children = await pool.fetch(
         "SELECT id FROM children WHERE family_id = $1 ORDER BY name", family_id
     )
+    child_ids = [c["id"] for c in children]
+    if not child_ids:
+        return []
+
+    # Batch: session stats for all children in one query
+    session_rows = await pool.fetch(
+        """SELECT child_id,
+                  COUNT(*) AS total_sessions,
+                  COALESCE(
+                      AVG(CAST(score AS REAL) / CASE WHEN total_words = 0 THEN 1 ELSE total_words END),
+                      0
+                  ) AS avg_score
+           FROM sessions
+           WHERE child_id = ANY($1) AND completed_at IS NOT NULL
+           GROUP BY child_id""",
+        child_ids,
+    )
+    stats_by_child = {r["child_id"]: r for r in session_rows}
+
+    # Batch: missed words for all children in one query
+    missed_rows = await pool.fetch(
+        """SELECT s.child_id, sw.text, COUNT(*) as miss_count
+           FROM session_words sesw
+           JOIN story_words sw ON sesw.word_id = sw.id
+           JOIN sessions s ON sesw.session_id = s.id
+           WHERE s.child_id = ANY($1) AND sesw.correct = FALSE
+           GROUP BY s.child_id, sw.text
+           ORDER BY s.child_id, miss_count DESC""",
+        child_ids,
+    )
+    missed_by_child: dict[int, list] = {cid: [] for cid in child_ids}
+    for r in missed_rows:
+        if len(missed_by_child[r["child_id"]]) < 20:
+            missed_by_child[r["child_id"]].append(
+                {"word": r["text"], "count": r["miss_count"]}
+            )
 
     results = []
-    for child in children:
-        results.append(await _get_child_analytics(pool, child["id"]))
+    for cid in child_ids:
+        stats = stats_by_child.get(cid)
+        results.append(AnalyticsResponse(
+            child_id=cid,
+            total_sessions=stats["total_sessions"] if stats else 0,
+            average_score=round((stats["avg_score"] or 0) * 100, 1) if stats else 0,
+            commonly_missed_words=missed_by_child.get(cid, []),
+        ))
 
     return results

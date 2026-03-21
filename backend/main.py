@@ -100,14 +100,16 @@ async def health_ready(request: Request):
             await conn.fetchval("SELECT 1")
         checks["database"] = "ok"
     except Exception as exc:
-        checks["database"] = f"error: {exc}"
+        logger.warning("Health check database failure: %s", exc)
+        checks["database"] = "error"
 
     # Redis
     try:
         await request.app.state.redis.ping()
         checks["redis"] = "ok"
     except Exception as exc:
-        checks["redis"] = f"error: {exc}"
+        logger.warning("Health check redis failure: %s", exc)
+        checks["redis"] = "error"
 
     all_ok = all(v == "ok" for v in checks.values())
     status_code = 200 if all_ok else 503

@@ -135,6 +135,13 @@ CREATE INDEX IF NOT EXISTS idx_generation_jobs_story_id ON generation_jobs(story
 CREATE INDEX IF NOT EXISTS idx_generation_logs_job_id ON generation_logs(job_id);
 CREATE INDEX IF NOT EXISTS idx_fp_progress_child_level ON fp_progress(child_id, fp_level);
 CREATE INDEX IF NOT EXISTS idx_stories_fp_level ON stories(fp_level);
+
+-- Analytics & scaling indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_child_completed ON sessions(child_id, completed_at) WHERE completed_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_session_words_correct ON session_words(word_id, correct);
+CREATE INDEX IF NOT EXISTS idx_generation_jobs_created ON generation_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stories_created ON stories(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_fp_progress_accuracy ON fp_progress(child_id, fp_level, accuracy);
 """
 
 
