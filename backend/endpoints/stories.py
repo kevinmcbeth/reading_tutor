@@ -172,7 +172,7 @@ async def list_stories(
 ):
     pool = get_pool()
 
-    query = "SELECT * FROM stories WHERE (family_id = $1 OR family_id IS NULL) AND status = 'ready'"
+    query = "SELECT * FROM stories WHERE (family_id = $1 OR family_id IS NULL) AND status = 'ready' AND fp_level IS NULL"
     params: list = [family_id]
     idx = 2
     if difficulty:

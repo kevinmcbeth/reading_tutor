@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -133,7 +133,7 @@ async def complete_session(
                 if result.correct:
                     score += 1
 
-            now = datetime.now(timezone.utc)
+            now = datetime.utcnow()
             await conn.execute(
                 "UPDATE sessions SET score = $1, completed_at = $2 WHERE id = $3",
                 score, now, session_id,

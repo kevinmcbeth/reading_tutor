@@ -476,9 +476,8 @@ async def main():
         info = LEVELS[level]
         topics = info["topics"][:per_level]
         for topic in topics:
-            constrained_topic = f"{info['constraints']}\n\nTopic: {topic}"
             requests.append({
-                "topic": constrained_topic,
+                "topic": topic,
                 "difficulty": info["difficulty"],
                 "theme": f"level-{level}",
                 "level": level,
@@ -498,20 +497,20 @@ async def main():
     # Clear rate limits
     try:
         import redis
-        r = redis.Redis()
+        r = redis.Redis(port=6380)
         r.flushall()
         print("Rate limits cleared")
     except Exception:
         print("Warning: could not clear rate limits (redis not available?)")
 
-    # Submit all
+    # Submit all via /api/fp/generate so stories get fp_level set
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         for i, req in enumerate(requests):
             resp = await client.post(
-                f"{args.api}/api/stories/generate",
+                f"{args.api}/api/fp/generate",
                 json={
                     "topic": req["topic"],
-                    "difficulty": req["difficulty"],
+                    "level": req["level"],
                     "theme": req["theme"],
                 },
                 headers=headers,
@@ -526,14 +525,14 @@ async def main():
             elif resp.status_code == 429:
                 try:
                     import redis
-                    redis.Redis().flushall()
+                    redis.Redis(port=6380).flushall()
                 except Exception:
                     pass
                 resp = await client.post(
-                    f"{args.api}/api/stories/generate",
+                    f"{args.api}/api/fp/generate",
                     json={
                         "topic": req["topic"],
-                        "difficulty": req["difficulty"],
+                        "level": req["level"],
                         "theme": req["theme"],
                     },
                     headers=headers,

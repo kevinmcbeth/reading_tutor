@@ -228,8 +228,12 @@ async def generate_fp_story(topic: str, level_data: dict) -> dict:
         result["style"] = "cartoon"
 
     # For levels A-D, validate vocabulary (retry once if invalid)
+    # Allow topic nouns — the topic words themselves are always permitted
     if vocab.get("type") == "sight_words_only":
         allowed = set(w.lower() for w in vocab.get("words", []))
+        # Extract simple nouns from the topic so they're allowed
+        topic_words = set(re.sub(r"[^\w\s]", "", topic.lower()).split())
+        allowed |= topic_words
         sentences = result.get("sentences", [])
         for sent in sentences:
             text = sent.get("text", "") if isinstance(sent, dict) else sent
@@ -238,7 +242,7 @@ async def generate_fp_story(topic: str, level_data: dict) -> dict:
                 clean = re.sub(r"[^\w]", "", w)
                 if clean and clean not in allowed:
                     logger.warning("Vocab violation at level %s: '%s' not in allowed list, retrying", level_data["level"], clean)
-                    content = await _chat(system_prompt, user_prompt + " IMPORTANT: Use ONLY the allowed sight words.")
+                    content = await _chat(system_prompt, user_prompt + " IMPORTANT: Use ONLY the allowed sight words plus the topic noun.")
                     result = _parse_json(content)
                     if result.get("style") not in VALID_STYLES:
                         result["style"] = "cartoon"
