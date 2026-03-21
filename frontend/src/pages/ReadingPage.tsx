@@ -78,6 +78,7 @@ export default function ReadingPage() {
   // Completion overlay
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbackType, setFeedbackType] = useState<'perfect' | 'good'>('good');
+  const [sessionComplete, setSessionComplete] = useState(false);
 
   const speech = useSpeechRecognition();
   const childId = selectedChild?.id;
@@ -216,7 +217,10 @@ export default function ReadingPage() {
         setFeedbackType(isPerfect ? 'perfect' : 'good');
         setShowFeedback(true);
         completeSession(sessionId, results)
-          .then(resp => console.log('Session complete:', resp))
+          .then(resp => {
+            console.log('Session complete:', resp);
+            setSessionComplete(true);
+          })
           .catch(err => console.error('Session complete failed:', err));
       } else {
         navigate('/library');
@@ -239,9 +243,14 @@ export default function ReadingPage() {
 
   const handleFeedbackDone = () => {
     setShowFeedback(false);
-    if (sessionId) {
+    if (sessionId && sessionComplete && story?.fp_level) {
+      // Levelled reader: go to results page for level-up screen
       navigate(`/results/${sessionId}`);
+    } else if (story?.fp_level) {
+      // Session still completing for levelled reader — go to level map
+      navigate('/leveled');
     } else {
+      // Free reading: go straight to library
       navigate('/library');
     }
   };
