@@ -163,15 +163,14 @@ async def complete_session(
             "SELECT * FROM children WHERE id = $1", session_row["child_id"]
         )
         if child and child["fp_level"] == fp_level:
-            recent = await pool.fetch(
-                "SELECT accuracy FROM fp_progress WHERE child_id = $1 AND fp_level = $2 "
-                "ORDER BY completed_at DESC LIMIT $3",
-                session_row["child_id"], fp_level, FP_ADVANCE_STORIES,
+            rows = await pool.fetch(
+                "SELECT accuracy FROM fp_progress WHERE child_id = $1 AND fp_level = $2",
+                session_row["child_id"], fp_level,
             )
-            if (
-                len(recent) >= FP_ADVANCE_STORIES
-                and all(r["accuracy"] >= FP_ADVANCE_THRESHOLD for r in recent)
-            ):
+            stories_passed = sum(
+                1 for r in rows if r["accuracy"] >= FP_ADVANCE_THRESHOLD
+            )
+            if stories_passed >= FP_ADVANCE_STORIES:
                 # Auto-advance to next level
                 next_level = await pool.fetchrow(
                     "SELECT level FROM fp_levels WHERE sort_order = "

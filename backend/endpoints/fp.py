@@ -138,10 +138,8 @@ async def get_fp_progress(child_id: int, family_id: int = Depends(get_current_fa
     suggest_advance = False
     suggest_drop = False
 
-    if stories_at_level >= FP_ADVANCE_STORIES:
-        recent = progress_rows[:FP_ADVANCE_STORIES]
-        if all(r["accuracy"] >= FP_ADVANCE_THRESHOLD for r in recent):
-            suggest_advance = True
+    if stories_passed >= FP_ADVANCE_STORIES:
+        suggest_advance = True
 
     if stories_at_level >= FP_DROP_STORIES:
         recent = progress_rows[:FP_DROP_STORIES]
