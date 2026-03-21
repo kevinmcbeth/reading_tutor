@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comfyui
+  namespace: gpu
+  labels:
+    app: comfyui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: comfyui
+  template:
+    metadata:
+      labels:
+        app: comfyui
+    spec:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: comfyui
+          image: REPLACE_WITH_COMFYUI_IMAGE
+          ports:
+            - containerPort: 8188
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "8Gi"
+              cpu: "2"
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "16Gi"
+              cpu: "4"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /system_stats
+              port: 8188
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: efs-models-pvc

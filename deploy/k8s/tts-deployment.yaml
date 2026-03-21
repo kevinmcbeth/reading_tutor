@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tts
+  namespace: gpu
+  labels:
+    app: tts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tts
+  template:
+    metadata:
+      labels:
+        app: tts
+    spec:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: tts
+          image: REPLACE_WITH_TTS_IMAGE
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REFERENCE_VOICE
+              value: /models/reference_voice.wav
+          resources:
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "4Gi"
+              cpu: "1"
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "8Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: efs-models-pvc

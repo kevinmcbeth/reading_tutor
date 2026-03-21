@@ -1,0 +1,7 @@
+aws_region        = "us-east-1"
+project_name      = "reading-tutor"
+domain_name       = "reading-tutor.duckdns.org"
+db_instance_class = "db.t4g.micro"
+redis_node_type   = "cache.t4g.micro"
+eks_node_max      = 4
+budget_limit      = "300"

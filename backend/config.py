@@ -27,6 +27,18 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379"
 
+    # AWS / Cloud settings
+    LLM_BACKEND: str = "ollama"  # "ollama" or "bedrock"
+    BEDROCK_MODEL_ID: str = "anthropic.claude-3-5-haiku-20241022"
+    AWS_REGION: str = "us-east-1"
+
+    STORAGE_BACKEND: str = "local"  # "local" or "s3"
+    S3_BUCKET: str = ""
+    CLOUDFRONT_DOMAIN: str = ""
+
+    TTS_BACKEND: str = "local"  # "local" or "remote"
+    TTS_URL: str = "http://tts.gpu.svc.cluster.local:8080"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @model_validator(mode="after")

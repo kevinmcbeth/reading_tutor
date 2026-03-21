@@ -7,7 +7,7 @@ from pathlib import Path
 
 from config import settings
 from database import get_pool
-from services import comfyui_client, ollama_client, tts_service
+from services import comfyui_client, storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,16 @@ COMMON_WORDS = {
     "she", "we", "they", "me", "him", "her", "us", "them", "my", "his",
     "our", "your", "i", "you", "this", "that", "up", "out",
 }
+
+
+def _get_llm_client():
+    """Return the appropriate LLM client based on config."""
+    if settings.LLM_BACKEND == "bedrock":
+        from services import bedrock_client
+        return bedrock_client
+    else:
+        from services import ollama_client
+        return ollama_client
 
 
 async def log_generation(job_id: int, level: str, message: str) -> None:
@@ -84,7 +94,7 @@ async def _check_cancelled(job_id: int) -> bool:
 
 
 async def _manage_comfyui(action: str) -> None:
-    """Start or stop ComfyUI via systemctl to manage GPU memory."""
+    """Start or stop ComfyUI via systemctl to manage GPU memory (local mode only)."""
     try:
         proc = await asyncio.create_subprocess_exec(
             "sudo", "systemctl", action, "comfyui",
@@ -146,6 +156,15 @@ def _is_challenge_word(
         return True
 
 
+def _is_local_mode() -> bool:
+    """Check if we're running all services locally (single machine)."""
+    return (
+        settings.LLM_BACKEND == "ollama"
+        and settings.TTS_BACKEND == "local"
+        and settings.STORAGE_BACKEND == "local"
+    )
+
+
 async def run_story_generation(
     story_id: int,
     job_id: int,
@@ -155,6 +174,8 @@ async def run_story_generation(
 ) -> None:
     """Run the full story generation pipeline."""
     pool = get_pool()
+    llm = _get_llm_client()
+    is_local = _is_local_mode()
 
     try:
         # --- Stage 1: Generate story text ---
@@ -165,7 +186,7 @@ async def run_story_generation(
         await _update_job(job_id, status="generating_text")
 
         try:
-            story_data = await ollama_client.generate_story(topic, difficulty, theme)
+            story_data = await llm.generate_story(topic, difficulty, theme)
         except Exception as exc:
             await log_generation(job_id, "error", f"Story text generation failed: {exc}")
             await _update_job(
@@ -228,7 +249,7 @@ async def run_story_generation(
             return
 
         try:
-            image_prompts = await ollama_client.generate_image_prompts(
+            image_prompts = await llm.generate_image_prompts(
                 " ".join(sr["text"] for sr in sentence_records),
                 style,
                 [{"text": sr["text"]} for sr in sentence_records],
@@ -256,21 +277,28 @@ async def run_story_generation(
 
         await log_generation(job_id, "info", "Image prompts generated")
 
-        # Unload Ollama model — no longer needed, frees GPU for images + audio
-        await _unload_ollama_model()
-        await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
+        # GPU memory management — only needed in local mode
+        if is_local:
+            await _unload_ollama_model()
+            await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
 
         # --- Stage 3: Generate images ---
         if await _check_cancelled(job_id):
             return
 
-        await log_generation(job_id, "info", "Starting ComfyUI for image generation")
-        await _manage_comfyui("start")
+        if is_local:
+            await log_generation(job_id, "info", "Starting ComfyUI for image generation")
+            await _manage_comfyui("start")
+
         await _update_job(job_id, status="generating_images")
-        images_dir = (
-            Path(settings.data_path) / "stories" / story_uuid / "images"
-        )
-        images_dir.mkdir(parents=True, exist_ok=True)
+
+        # In local mode, ComfyUI writes to local disk directly via output_path.
+        # In cloud mode, ComfyUI still writes to a temp path, then we upload to S3.
+        if settings.STORAGE_BACKEND == "local":
+            images_dir = (
+                Path(settings.data_path) / "stories" / story_uuid / "images"
+            )
+            images_dir.mkdir(parents=True, exist_ok=True)
 
         total_tasks = len(image_prompts) if image_prompts else 0
         for i, ip in enumerate(image_prompts):
@@ -283,20 +311,49 @@ async def run_story_generation(
             if s_idx >= len(sentence_records):
                 continue
             sid = sentence_records[s_idx]["id"]
-            img_path = str(images_dir / f"sentence_{s_idx}.png")
 
-            success = await comfyui_client.generate_image(
-                prompt=ip.get("image_prompt", ""),
-                negative_prompt=ip.get("negative_prompt", ""),
-                output_path=img_path,
-            )
+            storage_key = f"stories/{story_uuid}/images/sentence_{s_idx}.png"
+
+            if settings.STORAGE_BACKEND == "s3":
+                # ComfyUI generates to a temp file, then upload to S3
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_path = tmp.name
+
+                success = await comfyui_client.generate_image(
+                    prompt=ip.get("image_prompt", ""),
+                    negative_prompt=ip.get("negative_prompt", ""),
+                    output_path=tmp_path,
+                )
+
+                if success:
+                    img_data = Path(tmp_path).read_bytes()
+                    storage_service.save_file(storage_key, img_data)
+                    Path(tmp_path).unlink(missing_ok=True)
+
+                    await pool.execute(
+                        "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
+                        "WHERE id = $2",
+                        storage_key, sid,
+                    )
+                else:
+                    Path(tmp_path).unlink(missing_ok=True)
+            else:
+                img_path = str(images_dir / f"sentence_{s_idx}.png")
+                success = await comfyui_client.generate_image(
+                    prompt=ip.get("image_prompt", ""),
+                    negative_prompt=ip.get("negative_prompt", ""),
+                    output_path=img_path,
+                )
+
+                if success:
+                    await pool.execute(
+                        "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
+                        "WHERE id = $2",
+                        img_path, sid,
+                    )
 
             if success:
-                await pool.execute(
-                    "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
-                    "WHERE id = $2",
-                    img_path, sid,
-                )
                 await log_generation(
                     job_id, "info", f"Image generated for sentence {s_idx}"
                 )
@@ -309,19 +366,22 @@ async def run_story_generation(
                 pct = ((i + 1) / total_tasks) * 60  # images are 0-60% of progress
                 await _update_job(job_id, progress_pct=pct)
 
-        # Stop ComfyUI to free GPU for TTS
-        await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
-        await _manage_comfyui("stop")
+        # Stop ComfyUI — only in local mode
+        if is_local:
+            await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
+            await _manage_comfyui("stop")
 
         # --- Stage 4: Generate audio ---
         if await _check_cancelled(job_id):
             return
 
         await _update_job(job_id, status="generating_audio")
-        audio_dir = (
-            Path(settings.data_path) / "stories" / story_uuid / "audio"
-        )
-        audio_dir.mkdir(parents=True, exist_ok=True)
+
+        if settings.STORAGE_BACKEND == "local":
+            audio_dir = (
+                Path(settings.data_path) / "stories" / story_uuid / "audio"
+            )
+            audio_dir.mkdir(parents=True, exist_ok=True)
 
         # Get all words from DB
         all_words = []
@@ -340,16 +400,39 @@ async def run_story_generation(
             if await _check_cancelled(job_id):
                 return
 
-            word_path = str(audio_dir / f"word_{word_row['id']}.wav")
-            success = await tts_service.generate_word_audio_async(
-                word_row["text"], word_path
-            )
+            storage_key = f"stories/{story_uuid}/audio/word_{word_row['id']}.wav"
+
+            if settings.TTS_BACKEND == "remote":
+                from services import tts_client
+                audio_data = await tts_client.generate_word_audio(word_row["text"])
+                success = audio_data is not None
+                if success:
+                    storage_service.save_file(storage_key, audio_data)
+                    await pool.execute(
+                        "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
+                        storage_key, word_row["id"],
+                    )
+            else:
+                from services import tts_service
+                word_path = str(audio_dir / f"word_{word_row['id']}.wav")
+                success = await tts_service.generate_word_audio_async(
+                    word_row["text"], word_path
+                )
+                if success:
+                    if settings.STORAGE_BACKEND == "s3":
+                        storage_service.save_file(storage_key, Path(word_path).read_bytes())
+                        Path(word_path).unlink(missing_ok=True)
+                        await pool.execute(
+                            "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
+                            storage_key, word_row["id"],
+                        )
+                    else:
+                        await pool.execute(
+                            "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
+                            word_path, word_row["id"],
+                        )
 
             if success:
-                await pool.execute(
-                    "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
-                    word_path, word_row["id"],
-                )
                 await log_generation(
                     job_id, "info", f"Audio generated for word '{word_row['text']}'"
                 )
@@ -370,10 +453,23 @@ async def run_story_generation(
             if await _check_cancelled(job_id):
                 return
 
-            sent_path = str(audio_dir / f"sentence_{sr['idx']}.wav")
-            success = await tts_service.generate_sentence_audio_async(
-                sr["text"], sent_path
-            )
+            storage_key = f"stories/{story_uuid}/audio/sentence_{sr['idx']}.wav"
+
+            if settings.TTS_BACKEND == "remote":
+                from services import tts_client
+                audio_data = await tts_client.generate_sentence_audio(sr["text"])
+                success = audio_data is not None
+                if success:
+                    storage_service.save_file(storage_key, audio_data)
+            else:
+                from services import tts_service
+                sent_path = str(audio_dir / f"sentence_{sr['idx']}.wav")
+                success = await tts_service.generate_sentence_audio_async(
+                    sr["text"], sent_path
+                )
+                if success and settings.STORAGE_BACKEND == "s3":
+                    storage_service.save_file(storage_key, Path(sent_path).read_bytes())
+                    Path(sent_path).unlink(missing_ok=True)
 
             if success:
                 await log_generation(
@@ -399,10 +495,14 @@ async def run_story_generation(
             completed_at=datetime.now(timezone.utc),
         )
         await _update_story(story_id, status="ready")
-        # Unload TTS and reload Ollama so it's warm for next request
-        await tts_service.unload_tts_async()
-        await log_generation(job_id, "info", "TTS model unloaded")
-        await _preload_ollama_model()
+
+        # Cleanup: unload models in local mode
+        if is_local:
+            from services import tts_service
+            await tts_service.unload_tts_async()
+            await log_generation(job_id, "info", "TTS model unloaded")
+            await _preload_ollama_model()
+
         await log_generation(job_id, "info", "Story generation complete")
 
     except Exception as exc:
@@ -416,6 +516,7 @@ async def run_story_generation(
 async def run_batch_generation(prompts: list[dict]) -> list[int]:
     """Create jobs for each prompt and run them serially. Returns list of job IDs."""
     pool = get_pool()
+    llm = _get_llm_client()
     job_ids = []
 
     async with pool.acquire() as conn:
@@ -449,7 +550,8 @@ async def run_batch_generation(prompts: list[dict]) -> list[int]:
 
 async def run_meta_generation(description: str, count: int = 5) -> list[int]:
     """Generate story prompts from a description, then run batch generation."""
-    meta_prompts = await ollama_client.generate_meta_prompts(description, count)
+    llm = _get_llm_client()
+    meta_prompts = await llm.generate_meta_prompts(description, count)
     prompts = []
     for mp in meta_prompts:
         prompts.append(

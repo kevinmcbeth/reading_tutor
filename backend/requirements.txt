@@ -10,3 +10,4 @@ python-jose[cryptography]
 passlib[bcrypt]
 arq
 redis[hiredis]
+boto3
