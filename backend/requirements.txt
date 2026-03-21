@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+asyncpg
+pydantic-settings
+python-dotenv
+httpx
+f5-tts
+faster-whisper
+python-jose[cryptography]
+passlib[bcrypt]
+arq
+redis[hiredis]

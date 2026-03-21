@@ -1,0 +1,28 @@
+[Unit]
+Description=Reading Tutor Worker (arq - story generation)
+After=network.target postgresql.service redis.service
+Requires=postgresql.service redis.service
+
+[Service]
+Type=exec
+User=reading-tutor
+Group=reading-tutor
+WorkingDirectory=/opt/reading-tutor/backend
+EnvironmentFile=/opt/reading-tutor/backend/.env
+ExecStart=/opt/reading-tutor/backend/venv/bin/arq worker.WorkerSettings
+Restart=always
+RestartSec=10
+
+# GPU access - worker needs GPU for TTS
+SupplementaryGroups=video render
+
+# Security hardening (relaxed for TTS/GPU model caching)
+NoNewPrivileges=yes
+ReadWritePaths=/opt/reading-tutor/backend/data
+
+# Resource limits - worker is memory-heavy due to TTS model
+LimitNOFILE=65536
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target

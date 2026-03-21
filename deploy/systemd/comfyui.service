@@ -1,0 +1,19 @@
+[Unit]
+Description=ComfyUI Image Generation Server
+After=network.target
+
+[Service]
+Type=exec
+User=kmcbeth
+WorkingDirectory=/home/kmcbeth/workspaces/ComfyUI
+ExecStart=/home/kmcbeth/workspaces/ComfyUI/.venv/bin/python main.py --listen 127.0.0.1 --port 8188
+Restart=on-failure
+RestartSec=10
+
+# GPU access
+SupplementaryGroups=video render
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

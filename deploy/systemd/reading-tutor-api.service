@@ -1,0 +1,31 @@
+[Unit]
+Description=Reading Tutor API (FastAPI/uvicorn)
+After=network.target postgresql.service redis.service
+Requires=postgresql.service redis.service
+
+[Service]
+Type=exec
+User=reading-tutor
+Group=reading-tutor
+WorkingDirectory=/opt/reading-tutor/backend
+EnvironmentFile=/opt/reading-tutor/backend/.env
+ExecStart=/opt/reading-tutor/backend/venv/bin/uvicorn main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --workers 2 \
+    --loop uvloop \
+    --http httptools \
+    --access-log \
+    --log-level info
+Restart=always
+RestartSec=5
+
+# Security hardening (relaxed for model caching)
+NoNewPrivileges=yes
+ReadWritePaths=/opt/reading-tutor/backend/data
+
+# Resource limits
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
