@@ -213,3 +213,35 @@ async def list_child_sessions(
         child_id, limit, offset,
     )
     return [_session_from_row(r) for r in rows]
+
+
+@router.delete("/child/{child_id}/incomplete")
+async def delete_incomplete_sessions(
+    child_id: int, family_id: int = Depends(get_current_family)
+):
+    """Delete all incomplete (orphaned) sessions for a child."""
+    pool = get_pool()
+
+    child = await pool.fetchrow(
+        "SELECT id FROM children WHERE id = $1 AND family_id = $2",
+        child_id, family_id,
+    )
+    if not child:
+        raise HTTPException(status_code=403, detail="Child does not belong to your family")
+
+    # Delete session_words for incomplete sessions first (FK constraint)
+    deleted_words = await pool.execute(
+        """DELETE FROM session_words WHERE session_id IN (
+               SELECT id FROM sessions
+               WHERE child_id = $1 AND completed_at IS NULL
+           )""",
+        child_id,
+    )
+
+    result = await pool.execute(
+        "DELETE FROM sessions WHERE child_id = $1 AND completed_at IS NULL",
+        child_id,
+    )
+    count = int(result.split()[-1])
+    logger.info("Deleted %d incomplete sessions for child %d", count, child_id)
+    return {"deleted": count}

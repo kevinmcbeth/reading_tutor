@@ -192,6 +192,12 @@ export async function fetchChildSessions(childId: string): Promise<SessionRespon
   return fetchJson<SessionResponse[]>(`/sessions/child/${childId}`);
 }
 
+export async function deleteIncompleteSessions(childId: string): Promise<{ deleted: number }> {
+  return fetchJson<{ deleted: number }>(`/sessions/child/${childId}/incomplete`, {
+    method: 'DELETE',
+  });
+}
+
 export async function fetchGenerationJobs(): Promise<GenerationJobResponse[]> {
   return fetchJson<GenerationJobResponse[]>('/generation/jobs');
 }

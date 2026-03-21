@@ -78,6 +78,8 @@ export default function ReadingPage() {
   // Completion overlay
   const [showFeedback, setShowFeedback] = useState(false);
   const [feedbackType, setFeedbackType] = useState<'perfect' | 'good'>('good');
+  const [completing, setCompleting] = useState(false);
+  const [completionError, setCompletionError] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
 
   const speech = useSpeechRecognition();
@@ -196,6 +198,23 @@ export default function ReadingPage() {
     }
   }, [speech]);
 
+  const submitCompletion = useCallback((sid: string, results: WordResult[]) => {
+    setCompleting(true);
+    setCompletionError(false);
+    completeSession(sid, results)
+      .then(() => {
+        setSessionComplete(true);
+        setCompleting(false);
+      })
+      .catch(err => {
+        console.error('Session complete failed:', err);
+        setCompletionError(true);
+        setCompleting(false);
+      });
+  }, []);
+
+  const pendingResultsRef = useRef<WordResult[] | null>(null);
+
   const handleNext = () => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -212,16 +231,11 @@ export default function ReadingPage() {
             correct: ws.state === 'correct',
           });
         });
-        console.log('Submitting session', sessionId, 'results:', results.length);
+        pendingResultsRef.current = results;
         const isPerfect = correctWords === totalWords && totalWords > 0;
         setFeedbackType(isPerfect ? 'perfect' : 'good');
         setShowFeedback(true);
-        completeSession(sessionId, results)
-          .then(resp => {
-            console.log('Session complete:', resp);
-            setSessionComplete(true);
-          })
-          .catch(err => console.error('Session complete failed:', err));
+        submitCompletion(sessionId, results);
       } else {
         navigate('/library');
       }
@@ -241,7 +255,19 @@ export default function ReadingPage() {
     }
   };
 
+  const handleRetry = () => {
+    if (sessionId && pendingResultsRef.current) {
+      submitCompletion(sessionId, pendingResultsRef.current);
+    }
+  };
+
   const handleFeedbackDone = () => {
+    // Don't navigate while completion is in-flight
+    if (completing) return;
+
+    // If completion failed, don't dismiss — user can retry or skip
+    if (completionError) return;
+
     setShowFeedback(false);
     if (sessionId && sessionComplete && story?.fp_level) {
       // Levelled reader: go to results page for level-up screen
@@ -253,6 +279,13 @@ export default function ReadingPage() {
       // Free reading: go straight to library
       navigate('/library');
     }
+  };
+
+  const handleSkipAndExit = () => {
+    // Allow user to leave even if save failed (session stays orphaned but
+    // can be cleaned up via the delete-incomplete endpoint)
+    setShowFeedback(false);
+    navigate('/library');
   };
 
   // Cleanup audio on unmount
@@ -428,6 +461,10 @@ export default function ReadingPage() {
         type={feedbackType}
         visible={showFeedback}
         onDone={handleFeedbackDone}
+        completing={completing}
+        completionError={completionError}
+        onRetry={handleRetry}
+        onSkip={handleSkipAndExit}
       />
 
       {/* Speech error notice */}

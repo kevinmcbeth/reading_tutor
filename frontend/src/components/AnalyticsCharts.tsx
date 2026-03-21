@@ -1,11 +1,32 @@
-import { AnalyticsResponse, SessionResponse } from '../services/api';
+import { useState } from 'react';
+import { AnalyticsResponse, SessionResponse, deleteIncompleteSessions } from '../services/api';
 
 interface AnalyticsChartsProps {
   analytics: AnalyticsResponse | null;
   sessions: SessionResponse[];
+  childId?: string;
+  onSessionsChanged?: () => void;
 }
 
-export default function AnalyticsCharts({ analytics, sessions }: AnalyticsChartsProps) {
+export default function AnalyticsCharts({ analytics, sessions, childId, onSessionsChanged }: AnalyticsChartsProps) {
+  const [cleaning, setCleaning] = useState(false);
+  const incompleteSessions = sessions.filter(s => !s.completed_at);
+
+  const handleCleanup = async () => {
+    if (!childId) return;
+    setCleaning(true);
+    try {
+      const result = await deleteIncompleteSessions(childId);
+      if (result.deleted > 0 && onSessionsChanged) {
+        onSessionsChanged();
+      }
+    } catch (err) {
+      console.error('Failed to clean up sessions:', err);
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {analytics && (
@@ -41,7 +62,18 @@ export default function AnalyticsCharts({ analytics, sessions }: AnalyticsCharts
 
       {sessions.length > 0 && (
         <div className="bg-white rounded-xl p-4 shadow">
-          <h4 className="font-bold text-gray-700 mb-3">Recent Sessions</h4>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="font-bold text-gray-700">Recent Sessions</h4>
+            {incompleteSessions.length > 0 && childId && (
+              <button
+                onClick={handleCleanup}
+                disabled={cleaning}
+                className="text-sm px-3 py-1 bg-red-50 text-red-600 rounded-full hover:bg-red-100 transition disabled:opacity-50"
+              >
+                {cleaning ? 'Cleaning...' : `Remove ${incompleteSessions.length} incomplete`}
+              </button>
+            )}
+          </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-gray-500">

@@ -183,6 +183,15 @@ export default function ParentDashboard() {
                       <AnalyticsCharts
                         analytics={childAnalytics[child.id] || null}
                         sessions={childSessions[child.id] || []}
+                        childId={child.id}
+                        onSessionsChanged={async () => {
+                          const [sessions, analytics] = await Promise.all([
+                            fetchChildSessions(child.id),
+                            fetchAnalytics(child.id),
+                          ]);
+                          setChildSessions(prev => ({ ...prev, [child.id]: sessions }));
+                          setChildAnalytics(prev => ({ ...prev, [child.id]: analytics }));
+                        }}
                       />
                     </div>
                   </div>
