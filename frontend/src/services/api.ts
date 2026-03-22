@@ -176,6 +176,17 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
   return fetchJson<LeaderboardEntry[]>('/children/leaderboard');
 }
 
+export interface LevelLeaderboardEntry {
+  name: string;
+  avatar: string | null;
+  fp_level: string;
+  sort_order: number;
+}
+
+export async function fetchLevelLeaderboard(): Promise<LevelLeaderboardEntry[]> {
+  return fetchJson<LevelLeaderboardEntry[]>('/children/leaderboard/levels');
+}
+
 export async function fetchChild(id: string): Promise<ChildResponse> {
   return fetchJson<ChildResponse>(`/children/${id}`);
 }

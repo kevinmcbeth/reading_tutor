@@ -7,6 +7,7 @@ from models.api_models import (
     ChildResponse,
     DEFAULT_PAGE_LIMIT,
     LeaderboardEntry,
+    LevelLeaderboardEntry,
     MAX_PAGE_LIMIT,
 )
 
@@ -73,6 +74,29 @@ async def leaderboard(family_id: int = Depends(get_current_family)):
             avatar=r["avatar"],
             total_words=r["total_words"],
             total_sessions=r["total_sessions"],
+        )
+        for r in rows
+    ]
+
+
+@router.get("/leaderboard/levels", response_model=list[LevelLeaderboardEntry])
+async def level_leaderboard(family_id: int = Depends(get_current_family)):
+    pool = get_pool()
+    rows = await pool.fetch(
+        """SELECT c.name, c.avatar, c.fp_level, f.sort_order
+           FROM children c
+           JOIN fp_levels f ON f.level = c.fp_level
+           WHERE c.family_id = $1 AND c.fp_level IS NOT NULL
+           ORDER BY f.sort_order DESC
+           LIMIT 20""",
+        family_id,
+    )
+    return [
+        LevelLeaderboardEntry(
+            name=r["name"],
+            avatar=r["avatar"],
+            fp_level=r["fp_level"],
+            sort_order=r["sort_order"],
         )
         for r in rows
     ]

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchChildren, createChild, fetchLeaderboard, ChildResponse, LeaderboardEntry } from '../services/api';
+import { fetchChildren, createChild, fetchLeaderboard, fetchLevelLeaderboard, ChildResponse, LeaderboardEntry, LevelLeaderboardEntry } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const PRESET_AVATARS = ['🐱', '🐶', '🐰', '🦊', '🐻', '🦁', '🐸', '🐵', '🦄', '🐼'];
@@ -15,10 +15,11 @@ export default function ChildLoginPage() {
   const [selectedAvatar, setSelectedAvatar] = useState(PRESET_AVATARS[0]);
   const [creating, setCreating] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [levelLeaderboard, setLevelLeaderboard] = useState<LevelLeaderboardEntry[]>([]);
 
   useEffect(() => {
-    Promise.all([fetchChildren(), fetchLeaderboard()])
-      .then(([c, lb]) => { setChildren(c); setLeaderboard(lb); })
+    Promise.all([fetchChildren(), fetchLeaderboard(), fetchLevelLeaderboard()])
+      .then(([c, lb, llb]) => { setChildren(c); setLeaderboard(lb); setLevelLeaderboard(llb); })
       .catch((err) => {
         console.error(err);
         if (err.message?.includes('Session expired') || err.message?.includes('log in')) {
@@ -112,33 +113,67 @@ export default function ChildLoginPage() {
         + Add New Reader
       </button>
 
-      {/* Leaderboard */}
-      {leaderboard.length > 0 && (
-        <div className="bg-white/90 rounded-3xl p-6 shadow-xl max-w-md w-full">
-          <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-4">
-            🏆 Leaderboard
-          </h2>
-          <div className="space-y-2">
-            {leaderboard.map((entry, i) => {
-              const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-              return (
-                <div
-                  key={`${entry.name}-${i}`}
-                  className={`flex items-center gap-3 p-3 rounded-xl ${
-                    i === 0 ? 'bg-yellow-50' : i === 1 ? 'bg-gray-50' : i === 2 ? 'bg-orange-50' : ''
-                  }`}
-                >
-                  <span className="text-2xl w-10 text-center">{medal}</span>
-                  <span className="text-2xl">{entry.avatar || '😊'}</span>
-                  <span className="text-lg font-bold text-gray-700 flex-1">{entry.name}</span>
-                  <div className="text-right">
-                    <div className="text-lg font-bold text-green-600">{entry.total_words}</div>
-                    <div className="text-xs text-gray-400">words</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+      {/* Leaderboards */}
+      {(leaderboard.length > 0 || levelLeaderboard.length > 0) && (
+        <div className="flex flex-col md:flex-row gap-6 max-w-3xl w-full">
+          {/* Words Leaderboard */}
+          {leaderboard.length > 0 && (
+            <div className="bg-white/90 rounded-3xl p-6 shadow-xl flex-1">
+              <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-4">
+                🏆 Most Words Read
+              </h2>
+              <div className="space-y-2">
+                {leaderboard.map((entry, i) => {
+                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                  return (
+                    <div
+                      key={`words-${entry.name}-${i}`}
+                      className={`flex items-center gap-3 p-3 rounded-xl ${
+                        i === 0 ? 'bg-yellow-50' : i === 1 ? 'bg-gray-50' : i === 2 ? 'bg-orange-50' : ''
+                      }`}
+                    >
+                      <span className="text-2xl w-10 text-center">{medal}</span>
+                      <span className="text-2xl">{entry.avatar || '😊'}</span>
+                      <span className="text-lg font-bold text-gray-700 flex-1">{entry.name}</span>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-green-600">{entry.total_words}</div>
+                        <div className="text-xs text-gray-400">words</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Level Leaderboard */}
+          {levelLeaderboard.length > 0 && (
+            <div className="bg-white/90 rounded-3xl p-6 shadow-xl flex-1">
+              <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-4">
+                📚 Reading Level
+              </h2>
+              <div className="space-y-2">
+                {levelLeaderboard.map((entry, i) => {
+                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                  return (
+                    <div
+                      key={`level-${entry.name}-${i}`}
+                      className={`flex items-center gap-3 p-3 rounded-xl ${
+                        i === 0 ? 'bg-yellow-50' : i === 1 ? 'bg-gray-50' : i === 2 ? 'bg-orange-50' : ''
+                      }`}
+                    >
+                      <span className="text-2xl w-10 text-center">{medal}</span>
+                      <span className="text-2xl">{entry.avatar || '😊'}</span>
+                      <span className="text-lg font-bold text-gray-700 flex-1">{entry.name}</span>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-purple-600">Level {entry.fp_level}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

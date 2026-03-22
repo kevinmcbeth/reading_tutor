@@ -82,6 +82,13 @@ class LeaderboardEntry(BaseModel):
     total_sessions: int
 
 
+class LevelLeaderboardEntry(BaseModel):
+    name: str
+    avatar: Optional[str]
+    fp_level: str
+    sort_order: int
+
+
 class ChildResponse(BaseModel):
     id: int
     name: str
