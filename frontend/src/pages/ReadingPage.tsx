@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { fetchStory, createSession, completeSession, StoryResponse, WordResult } from '../services/api';
+import { getAccessToken } from '../services/auth';
 import { useAuth } from '../context/AuthContext';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { compareWords } from '../utils/wordMatch';
@@ -126,7 +127,9 @@ export default function ReadingPage() {
       audioRef.current.pause();
       audioRef.current = null;
     }
-    const audio = new Audio(`/api/assets/audio/sentence/${storyId}/${currentSentence.idx}`);
+    const token = getAccessToken();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    const audio = new Audio(`/api/assets/audio/sentence/${storyId}/${currentSentence.idx}${qs}`);
     audioRef.current = audio;
     setIsPlaying(true);
     audio.onended = () => setIsPlaying(false);
@@ -140,7 +143,9 @@ export default function ReadingPage() {
       audioRef.current.pause();
       audioRef.current = null;
     }
-    const audio = new Audio(`/api/assets/audio/word/${storyId}/${wordId}`);
+    const token = getAccessToken();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    const audio = new Audio(`/api/assets/audio/word/${storyId}/${wordId}${qs}`);
     audioRef.current = audio;
     setIsPlaying(true);
     audio.onended = () => setIsPlaying(false);
@@ -323,7 +328,9 @@ export default function ReadingPage() {
     );
   }
 
-  const imagePath = `/api/assets/image/${storyId}/${currentIdx}`;
+  const imgToken = getAccessToken();
+  const imgQs = imgToken ? `?token=${encodeURIComponent(imgToken)}` : '';
+  const imagePath = `/api/assets/image/${storyId}/${currentIdx}${imgQs}`;
 
   return (
     <div className="h-screen flex flex-col bg-yellow-50 overflow-hidden">

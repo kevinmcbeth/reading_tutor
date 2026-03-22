@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import traceback
 import uuid as uuid_mod
 from datetime import datetime
 from pathlib import Path
@@ -300,31 +301,37 @@ async def run_story_generation(
             )
             images_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build list of valid image tasks
-        image_tasks = []
-        for ip in (image_prompts or []):
+        total_tasks = len(image_prompts) if image_prompts else 0
+        for i, ip in enumerate(image_prompts):
+            if await _check_cancelled(job_id):
+                return
+
             if isinstance(ip, str):
                 continue
             s_idx = ip.get("sentence_index", 0)
             if s_idx >= len(sentence_records):
                 continue
-            image_tasks.append((s_idx, sentence_records[s_idx]["id"], ip))
+            sid = sentence_records[s_idx]["id"]
 
-        async def _generate_one_image(s_idx, sid, ip):
             storage_key = f"stories/{story_uuid}/images/sentence_{s_idx}.png"
+
             if settings.STORAGE_BACKEND == "s3":
+                # ComfyUI generates to a temp file, then upload to S3
                 import tempfile
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                     tmp_path = tmp.name
+
                 success = await comfyui_client.generate_image(
                     prompt=ip.get("image_prompt", ""),
                     negative_prompt=ip.get("negative_prompt", ""),
                     output_path=tmp_path,
                 )
+
                 if success:
                     img_data = Path(tmp_path).read_bytes()
                     storage_service.save_file(storage_key, img_data)
                     Path(tmp_path).unlink(missing_ok=True)
+
                     await pool.execute(
                         "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
                         "WHERE id = $2",
@@ -339,12 +346,14 @@ async def run_story_generation(
                     negative_prompt=ip.get("negative_prompt", ""),
                     output_path=img_path,
                 )
+
                 if success:
                     await pool.execute(
                         "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
                         "WHERE id = $2",
                         img_path, sid,
                     )
+
             if success:
                 await log_generation(
                     job_id, "info", f"Image generated for sentence {s_idx}"
@@ -353,22 +362,10 @@ async def run_story_generation(
                 await log_generation(
                     job_id, "warning", f"Image generation failed for sentence {s_idx}"
                 )
-            return success
 
-        if image_tasks:
-            if await _check_cancelled(job_id):
-                return
-            results = await asyncio.gather(
-                *(_generate_one_image(s_idx, sid, ip) for s_idx, sid, ip in image_tasks),
-                return_exceptions=True,
-            )
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    await log_generation(
-                        job_id, "warning",
-                        f"Image generation error for sentence {image_tasks[i][0]}: {result}",
-                    )
-            await _update_job(job_id, progress_pct=60)
+            if total_tasks > 0:
+                pct = ((i + 1) / total_tasks) * 60  # images are 0-60% of progress
+                await _update_job(job_id, progress_pct=pct)
 
         # Stop ComfyUI — only in local mode
         if is_local:
@@ -399,9 +396,13 @@ async def run_story_generation(
         total_audio = len(all_words) + len(sentence_records)
         completed_audio = 0
 
-        # Generate word audio — concurrently (TTS semaphore controls GPU access)
-        async def _gen_word_audio(word_row):
+        # Generate word audio
+        for word_row in all_words:
+            if await _check_cancelled(job_id):
+                return
+
             storage_key = f"stories/{story_uuid}/audio/word_{word_row['id']}.wav"
+
             if settings.TTS_BACKEND == "remote":
                 from services import tts_client
                 audio_data = await tts_client.generate_word_audio(word_row["text"])
@@ -431,10 +432,30 @@ async def run_story_generation(
                             "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
                             word_path, word_row["id"],
                         )
-            return success
 
-        async def _gen_sentence_audio(sr):
+            if success:
+                await log_generation(
+                    job_id, "info", f"Audio generated for word '{word_row['text']}'"
+                )
+            else:
+                await log_generation(
+                    job_id,
+                    "warning",
+                    f"Audio generation failed for word '{word_row['text']}'",
+                )
+
+            completed_audio += 1
+            if total_audio > 0:
+                pct = 60 + (completed_audio / total_audio) * 40
+                await _update_job(job_id, progress_pct=pct)
+
+        # Generate sentence audio
+        for sr in sentence_records:
+            if await _check_cancelled(job_id):
+                return
+
             storage_key = f"stories/{story_uuid}/audio/sentence_{sr['idx']}.wav"
+
             if settings.TTS_BACKEND == "remote":
                 from services import tts_client
                 audio_data = await tts_client.generate_sentence_audio(sr["text"])
@@ -450,23 +471,22 @@ async def run_story_generation(
                 if success and settings.STORAGE_BACKEND == "s3":
                     storage_service.save_file(storage_key, Path(sent_path).read_bytes())
                     Path(sent_path).unlink(missing_ok=True)
-            return success
 
-        # Run all word and sentence audio generation concurrently
-        audio_tasks = [_gen_word_audio(w) for w in all_words]
-        audio_tasks += [_gen_sentence_audio(sr) for sr in sentence_records]
-        audio_results = await asyncio.gather(*audio_tasks, return_exceptions=True)
+            if success:
+                await log_generation(
+                    job_id, "info", f"Audio generated for sentence {sr['idx']}"
+                )
+            else:
+                await log_generation(
+                    job_id,
+                    "warning",
+                    f"Audio generation failed for sentence {sr['idx']}",
+                )
 
-        for i, result in enumerate(audio_results):
-            if isinstance(result, Exception):
-                logger.warning("Audio generation error: %s", result)
-            elif result:
-                completed_audio += 1
-
-        await log_generation(
-            job_id, "info",
-            f"Audio generation complete: {completed_audio}/{total_audio} succeeded",
-        )
+            completed_audio += 1
+            if total_audio > 0:
+                pct = 60 + (completed_audio / total_audio) * 40
+                await _update_job(job_id, progress_pct=pct)
 
         # --- Complete ---
         await _update_job(
@@ -487,7 +507,8 @@ async def run_story_generation(
         await log_generation(job_id, "info", "Story generation complete")
 
     except Exception as exc:
-        await log_generation(job_id, "error", f"Pipeline error: {exc}")
+        tb = traceback.format_exc()
+        await log_generation(job_id, "error", f"Pipeline error: {exc}\n{tb}")
         await _update_job(
             job_id, status="failed", completed_at=datetime.utcnow()
         )
@@ -570,10 +591,24 @@ async def run_fp_story_generation(
             story_id, title=title, style=style, uuid=story_uuid, status="text_generated"
         )
 
-        # Save sentences and words to DB
+        # Save sentences and words to DB (clean up any from a previous failed attempt)
         sentence_records = []
         async with pool.acquire() as conn:
             async with conn.transaction():
+                old_sids = [
+                    r["id"] for r in await conn.fetch(
+                        "SELECT id FROM story_sentences WHERE story_id = $1", story_id
+                    )
+                ]
+                if old_sids:
+                    await conn.execute(
+                        "DELETE FROM story_words WHERE sentence_id = ANY($1::int[])",
+                        old_sids,
+                    )
+                    await conn.execute(
+                        "DELETE FROM story_sentences WHERE story_id = $1", story_id
+                    )
+
                 for idx, sent in enumerate(sentences):
                     if isinstance(sent, str):
                         text = sent
@@ -626,11 +661,21 @@ async def run_fp_story_generation(
         cover_prompt = ""
         cover_negative = ""
         if image_prompts:
-            ip = image_prompts[0]
+            # LLM may return a list or a dict — normalize to get the first entry
+            if isinstance(image_prompts, dict):
+                if "image_prompt" in image_prompts:
+                    ip = image_prompts
+                elif "prompts" in image_prompts:
+                    ip = image_prompts["prompts"][0] if image_prompts["prompts"] else {}
+                else:
+                    ip = next(iter(image_prompts.values()), {})
+            elif isinstance(image_prompts, list):
+                ip = image_prompts[0]
+            else:
+                ip = {}
             if isinstance(ip, dict):
                 cover_prompt = ip.get("image_prompt", "")
                 cover_negative = ip.get("negative_prompt", "")
-
         if is_local and not settings.USE_MOCK_SERVICES:
             await _unload_ollama_model()
             await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
@@ -774,7 +819,8 @@ async def run_fp_story_generation(
         await log_generation(job_id, "info", f"F&P Level {fp_level} story generation complete")
 
     except Exception as exc:
-        await log_generation(job_id, "error", f"Pipeline error: {exc}")
+        tb = traceback.format_exc()
+        await log_generation(job_id, "error", f"Pipeline error: {exc}\n{tb}")
         await _update_job(job_id, status="failed", completed_at=datetime.utcnow())
         await _update_story(story_id, status="failed")
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, RedirectResponse
 
-from auth import get_current_family
+from auth import get_current_family_from_query
 from config import settings
 from database import get_pool
 from services import storage_service
@@ -25,7 +25,7 @@ async def _get_story_uuid(story_id: int, family_id: int) -> str:
 async def get_image(
     story_id: int,
     sentence_idx: int,
-    family_id: int = Depends(get_current_family),
+    family_id: int = Depends(get_current_family_from_query),
 ):
     if sentence_idx < 0:
         raise HTTPException(status_code=400, detail="Invalid sentence index")
@@ -50,7 +50,7 @@ async def get_image(
 async def get_word_audio(
     story_id: int,
     word_id: int,
-    family_id: int = Depends(get_current_family),
+    family_id: int = Depends(get_current_family_from_query),
 ):
     story_dir = await _get_story_uuid(story_id, family_id)
     key = f"stories/{story_dir}/audio/word_{word_id}.wav"
@@ -73,7 +73,7 @@ async def get_word_audio(
 async def get_sentence_audio(
     story_id: int,
     sentence_idx: int,
-    family_id: int = Depends(get_current_family),
+    family_id: int = Depends(get_current_family_from_query),
 ):
     if sentence_idx < 0:
         raise HTTPException(status_code=400, detail="Invalid sentence index")

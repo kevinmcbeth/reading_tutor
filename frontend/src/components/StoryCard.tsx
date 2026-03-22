@@ -1,3 +1,5 @@
+import { getAccessToken } from '../services/auth';
+
 interface StoryCardProps {
   storyId: string;
   title: string;
@@ -14,6 +16,8 @@ const difficultyColors: Record<string, string> = {
 
 export default function StoryCard({ storyId, title, difficulty, theme, onClick }: StoryCardProps) {
   const colorClass = difficultyColors[difficulty] || 'bg-gray-100 text-gray-700 border-gray-300';
+  const token = getAccessToken();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
 
   return (
     <div
@@ -23,7 +27,7 @@ export default function StoryCard({ storyId, title, difficulty, theme, onClick }
       {/* Thumbnail */}
       <div className="h-36 bg-gradient-to-br from-purple-200 via-pink-100 to-yellow-100 flex items-center justify-center">
         <img
-          src={`/api/assets/image/${storyId}/0`}
+          src={`/api/assets/image/${storyId}/0${qs}`}
           alt={title}
           className="max-h-full max-w-full object-contain"
           onError={(e) => {

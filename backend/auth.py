@@ -104,3 +104,19 @@ async def get_current_family(
         return int(payload["sub"])
     except (JWTError, ValueError, KeyError):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+async def get_current_family_from_query(
+    request: Request,
+) -> int:
+    """Extract family_id from a ?token= query parameter (for media URLs)."""
+    token = request.query_params.get("token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token parameter")
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=["HS256"])
+        if payload.get("type") != "access":
+            raise HTTPException(status_code=401, detail="Invalid token type")
+        return int(payload["sub"])
+    except (JWTError, ValueError, KeyError):
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
