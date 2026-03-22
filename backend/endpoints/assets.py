@@ -38,7 +38,13 @@ async def get_image(
 
     image_path = settings.data_path / key
     if not image_path.exists():
-        raise HTTPException(status_code=404, detail="Image not found")
+        # Fall back to cover.png for older F&P stories
+        cover_key = f"stories/{story_dir}/images/cover.png"
+        cover_path = settings.data_path / cover_key
+        if cover_path.exists():
+            image_path = cover_path
+        else:
+            raise HTTPException(status_code=404, detail="Image not found")
     return FileResponse(
         str(image_path),
         media_type="image/png",

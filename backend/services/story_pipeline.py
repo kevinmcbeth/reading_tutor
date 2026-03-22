@@ -640,120 +640,108 @@ async def run_fp_story_generation(
             f"F&P Level {fp_level} story generated: '{title}' ({len(sentences)} sentences)",
         )
 
-        # --- Stage 2-3: Generate a single cover image for the whole story ---
+        # --- Stage 2: Generate per-sentence image prompts ---
         if await _check_cancelled(job_id):
             return
 
-        # Generate one image prompt for the whole story
         story_text = " ".join(sr["text"] for sr in sentence_records)
-        try:
-            from services import ollama_client
-            image_prompts = await ollama_client.generate_fp_image_prompts(
-                story_text,
-                style,
-                [{"text": story_text}],  # single prompt for whole story
-                image_support or "heavy",
-            )
-        except Exception as exc:
-            await log_generation(job_id, "warning", f"Cover image prompt generation failed: {exc}")
-            image_prompts = []
+        image_prompts = []
+        if generate_images:
+            try:
+                from services import ollama_client
+                image_prompts = await ollama_client.generate_fp_image_prompts(
+                    story_text,
+                    style,
+                    [{"text": sr["text"]} for sr in sentence_records],
+                    image_support or "heavy",
+                )
+            except Exception as exc:
+                await log_generation(job_id, "warning", f"Image prompt generation failed: {exc}")
+                image_prompts = []
 
-        cover_prompt = ""
-        cover_negative = ""
-        if image_prompts:
-            # LLM may return a list or a dict — normalize to get the first entry
+            # Normalize LLM response
             if isinstance(image_prompts, dict):
-                if "image_prompt" in image_prompts:
-                    ip = image_prompts
-                elif "prompts" in image_prompts:
-                    ip = image_prompts["prompts"][0] if image_prompts["prompts"] else {}
+                if "prompts" in image_prompts:
+                    image_prompts = image_prompts["prompts"]
+                elif "image_prompt" in image_prompts:
+                    image_prompts = [image_prompts]
                 else:
-                    ip = next(iter(image_prompts.values()), {})
-            elif isinstance(image_prompts, list):
-                ip = image_prompts[0]
-            else:
-                ip = {}
-            if isinstance(ip, dict):
-                cover_prompt = ip.get("image_prompt", "")
-                cover_negative = ip.get("negative_prompt", "")
+                    image_prompts = list(image_prompts.values()) if image_prompts else []
+
+            # Save prompts to DB
+            for ip in image_prompts:
+                if isinstance(ip, str):
+                    continue
+                s_idx = ip.get("sentence_index", 0)
+                if s_idx < len(sentence_records):
+                    sid = sentence_records[s_idx]["id"]
+                    await pool.execute(
+                        "UPDATE story_sentences SET image_prompt = $1, negative_prompt = $2 "
+                        "WHERE id = $3",
+                        ip.get("image_prompt", ""),
+                        ip.get("negative_prompt", ""),
+                        sid,
+                    )
+
+            await log_generation(job_id, "info", f"Generated {len(image_prompts)} image prompts")
+
         if is_local and not settings.USE_MOCK_SERVICES:
             await _unload_ollama_model()
             await log_generation(job_id, "info", "Ollama model unloaded to free GPU memory")
 
-        if cover_prompt:
+        # --- Stage 3: Generate per-sentence images ---
+        if image_prompts:
             if await _check_cancelled(job_id):
                 return
 
             if is_local and not settings.USE_MOCK_SERVICES:
-                await log_generation(job_id, "info", "Starting ComfyUI for cover image")
+                await log_generation(job_id, "info", "Starting ComfyUI for image generation")
                 await _manage_comfyui("start")
 
             await _update_job(job_id, status="generating_images")
             images_dir = Path(settings.data_path) / "stories" / story_uuid / "images"
             images_dir.mkdir(parents=True, exist_ok=True)
 
-            cover_path = str(images_dir / "cover.png")
-            success = await comfyui_client.generate_image(
-                prompt=cover_prompt,
-                negative_prompt=cover_negative,
-                output_path=cover_path,
-            )
+            total_images = len(image_prompts)
+            for i, ip in enumerate(image_prompts):
+                if await _check_cancelled(job_id):
+                    return
+                if isinstance(ip, str):
+                    continue
 
-            if success:
-                # Overlay the story title on the cover image
-                try:
-                    from PIL import Image, ImageDraw, ImageFont
-                    img = Image.open(cover_path)
-                    draw = ImageDraw.Draw(img)
+                s_idx = ip.get("sentence_index", 0)
+                if s_idx >= len(sentence_records):
+                    continue
+                sid = sentence_records[s_idx]["id"]
 
-                    # Use a large font size relative to image width
-                    font_size = img.width // 12
-                    try:
-                        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
-                    except (OSError, IOError):
-                        font = ImageFont.load_default()
+                img_path = str(images_dir / f"sentence_{s_idx}.png")
+                success = await comfyui_client.generate_image(
+                    prompt=ip.get("image_prompt", ""),
+                    negative_prompt=ip.get("negative_prompt", ""),
+                    output_path=img_path,
+                )
 
-                    # Draw title with dark outline + white fill at bottom
-                    text = title
-                    bbox = draw.textbbox((0, 0), text, font=font)
-                    text_w = bbox[2] - bbox[0]
-                    text_h = bbox[3] - bbox[1]
-                    x = (img.width - text_w) // 2
-                    y = img.height - text_h - img.height // 10  # 10% from bottom
-
-                    # Draw outline
-                    for dx in range(-3, 4):
-                        for dy in range(-3, 4):
-                            draw.text((x + dx, y + dy), text, font=font, fill=(0, 0, 0))
-                    # Draw white text
-                    draw.text((x, y), text, font=font, fill=(255, 255, 255))
-
-                    img.save(cover_path)
-                    await log_generation(job_id, "info", f"Title '{title}' overlaid on cover image")
-                except ImportError:
-                    await log_generation(job_id, "warning", "Pillow not installed, skipping title overlay")
-                except Exception as exc:
-                    await log_generation(job_id, "warning", f"Title overlay failed: {exc}")
-
-                # Set the same cover image on ALL sentences
-                for sr in sentence_records:
+                if success:
                     await pool.execute(
-                        "UPDATE story_sentences SET image_path = $1, has_image = TRUE WHERE id = $2",
-                        cover_path, sr["id"],
+                        "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
+                        "WHERE id = $2",
+                        img_path, sid,
                     )
-                await log_generation(job_id, "info", "Cover image assigned to all sentences")
-            else:
-                await log_generation(job_id, "warning", "Cover image generation failed")
+                    await log_generation(job_id, "info", f"Image generated for sentence {s_idx}")
+                else:
+                    await log_generation(job_id, "warning", f"Image generation failed for sentence {s_idx}")
+
+                if total_images > 0:
+                    pct = ((i + 1) / total_images) * 60
+                    await _update_job(job_id, progress_pct=pct)
 
             if is_local and not settings.USE_MOCK_SERVICES:
                 await log_generation(job_id, "info", "Stopping ComfyUI to free GPU for audio")
                 await _manage_comfyui("stop")
-
-            await _update_job(job_id, progress_pct=60)
         else:
-            if is_local and not settings.USE_MOCK_SERVICES:
-                await _unload_ollama_model()
-            await log_generation(job_id, "info", f"Level {fp_level}: no cover image prompt generated")
+            await log_generation(job_id, "info", f"Level {fp_level}: no images to generate")
+
+        await _update_job(job_id, progress_pct=60)
 
         # --- Stage 4: Generate audio ---
         if await _check_cancelled(job_id):

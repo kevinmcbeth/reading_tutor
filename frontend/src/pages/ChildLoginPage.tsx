@@ -18,16 +18,25 @@ export default function ChildLoginPage() {
   const [levelLeaderboard, setLevelLeaderboard] = useState<LevelLeaderboardEntry[]>([]);
 
   useEffect(() => {
-    Promise.all([fetchChildren(), fetchLeaderboard(), fetchLevelLeaderboard()])
-      .then(([c, lb, llb]) => { setChildren(c); setLeaderboard(lb); setLevelLeaderboard(llb); })
-      .catch((err) => {
-        console.error(err);
-        if (err.message?.includes('Session expired') || err.message?.includes('log in')) {
-          logout();
-          navigate('/parent');
-        }
-      })
+    const handleAuthError = (err: Error) => {
+      if (err.message?.includes('Session expired') || err.message?.includes('log in')) {
+        logout();
+        navigate('/parent');
+      }
+    };
+
+    fetchChildren()
+      .then(setChildren)
+      .catch((err) => { console.error(err); handleAuthError(err); })
       .finally(() => setLoading(false));
+
+    fetchLeaderboard()
+      .then(setLeaderboard)
+      .catch((err) => console.error('Leaderboard fetch failed:', err));
+
+    fetchLevelLeaderboard()
+      .then(setLevelLeaderboard)
+      .catch((err) => console.error('Level leaderboard fetch failed:', err));
   }, [logout, navigate]);
 
   const [selectedChildForMode, setSelectedChildForMode] = useState<ChildResponse | null>(null);

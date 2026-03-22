@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { fetchFPStories, StoryResponse } from '../services/api';
+import { getAccessToken } from '../services/auth';
 import LevelBadge from '../components/LevelBadge';
 
 export default function LeveledStoryListPage() {
@@ -63,28 +64,35 @@ export default function LeveledStoryListPage() {
             </button>
           </div>
         ) : (
-          <div className="grid gap-4">
-            {stories.map((story) => (
-              <button
-                key={story.id}
-                onClick={() => navigate(`/read/${story.id}`)}
-                className="bg-white rounded-2xl shadow-lg p-5 flex items-center gap-4 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all text-left"
-              >
-                <div className="text-4xl">
-                  {story.style === 'watercolor' ? '🎨' :
-                   story.style === 'soft_pastoral' ? '🌿' :
-                   story.style === 'realistic' ? '📷' :
-                   story.style === 'bright_pop' ? '🌈' : '🖍️'}
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-lg font-bold text-gray-800">{story.title}</h3>
-                  <p className="text-sm text-gray-500">{story.topic}</p>
-                </div>
-                <div className="text-purple-400 text-2xl">
-                  &rsaquo;
-                </div>
-              </button>
-            ))}
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
+            {stories.map((story) => {
+              const token = getAccessToken();
+              const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+              const coverUrl = `/api/assets/image/${story.id}/0${qs}`;
+              return (
+                <button
+                  key={story.id}
+                  onClick={() => navigate(`/read/${story.id}`)}
+                  className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all text-left flex flex-col"
+                >
+                  <div className="relative w-full aspect-[4/3] bg-gradient-to-b from-sky-100 to-sky-50">
+                    <img
+                      src={coverUrl}
+                      alt={story.title || 'Story cover'}
+                      className="w-full h-full object-cover"
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                    <div className="absolute top-2 right-2">
+                      <LevelBadge level={level || ''} state="current" size="sm" />
+                    </div>
+                  </div>
+                  <div className="p-3">
+                    <h3 className="text-base font-bold text-gray-800 leading-tight">{story.title}</h3>
+                    <p className="text-xs text-purple-500 font-semibold mt-1">Level {level}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
