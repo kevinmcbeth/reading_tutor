@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { fetchChildren, createChild, fetchLeaderboard, fetchLevelLeaderboard, ChildResponse, LeaderboardEntry, LevelLeaderboardEntry } from '../services/api';
+import { fetchChildren, createChild, fetchLeaderboard, fetchLevelLeaderboard, fetchPortfolioLeaderboard, ChildResponse, LeaderboardEntry, LevelLeaderboardEntry, PortfolioLeaderboardEntry } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
 const PRESET_AVATARS = ['🐱', '🐶', '🐰', '🦊', '🐻', '🦁', '🐸', '🐵', '🦄', '🐼'];
@@ -16,6 +16,7 @@ export default function ChildLoginPage() {
   const [creating, setCreating] = useState(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [levelLeaderboard, setLevelLeaderboard] = useState<LevelLeaderboardEntry[]>([]);
+  const [portfolioLeaderboard, setPortfolioLeaderboard] = useState<PortfolioLeaderboardEntry[]>([]);
 
   useEffect(() => {
     const handleAuthError = (err: Error) => {
@@ -37,6 +38,10 @@ export default function ChildLoginPage() {
     fetchLevelLeaderboard()
       .then(setLevelLeaderboard)
       .catch((err) => console.error('Level leaderboard fetch failed:', err));
+
+    fetchPortfolioLeaderboard()
+      .then(setPortfolioLeaderboard)
+      .catch((err) => console.error('Portfolio leaderboard fetch failed:', err));
   }, [logout, navigate]);
 
   const [selectedChildForMode, setSelectedChildForMode] = useState<ChildResponse | null>(null);
@@ -123,7 +128,7 @@ export default function ChildLoginPage() {
       </button>
 
       {/* Leaderboards */}
-      {(leaderboard.length > 0 || levelLeaderboard.length > 0) && (
+      {(leaderboard.length > 0 || levelLeaderboard.length > 0 || portfolioLeaderboard.length > 0) && (
         <div className="flex flex-col md:flex-row gap-6 max-w-3xl w-full">
           {/* Words Leaderboard */}
           {leaderboard.length > 0 && (
@@ -176,6 +181,36 @@ export default function ChildLoginPage() {
                       <span className="text-lg font-bold text-gray-700 flex-1">{entry.name}</span>
                       <div className="text-right">
                         <div className="text-lg font-bold text-purple-600">Level {entry.fp_level}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Portfolio Leaderboard */}
+          {portfolioLeaderboard.length > 0 && (
+            <div className="bg-white/90 rounded-3xl p-6 shadow-xl flex-1">
+              <h2 className="text-2xl font-extrabold text-gray-800 text-center mb-4">
+                📈 Richest Portfolios
+              </h2>
+              <div className="space-y-2">
+                {portfolioLeaderboard.map((entry, i) => {
+                  const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+                  return (
+                    <div
+                      key={`portfolio-${entry.name}-${i}`}
+                      className={`flex items-center gap-3 p-3 rounded-xl ${
+                        i === 0 ? 'bg-yellow-50' : i === 1 ? 'bg-gray-50' : i === 2 ? 'bg-orange-50' : ''
+                      }`}
+                    >
+                      <span className="text-2xl w-10 text-center">{medal}</span>
+                      <span className="text-2xl">{entry.avatar || '😊'}</span>
+                      <span className="text-lg font-bold text-gray-700 flex-1">{entry.name}</span>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-emerald-600">{entry.portfolio_value.toFixed(0)}</div>
+                        <div className="text-xs text-gray-400">coins</div>
                       </div>
                     </div>
                   );

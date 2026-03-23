@@ -5,7 +5,11 @@ import {
   createStock,
   updateStock,
   deleteStock,
+  createCustomNewsEvent,
+  fetchCustomNewsEvents,
+  deleteCustomNewsEvent,
   StockInfoResponse,
+  CustomNewsEventResponse,
 } from '../services/api';
 
 const EMOJI_OPTIONS = ['📊', '🦄', '🍌', '🦕', '🧪', '🤖', '🍕', '🌈', '🧦', '🏰', '🫧', '🚛', '🫘', '🐉', '🌋', '💨', '🧊', '🪄', '☁️', '💩', '🐱', '🎮', '🧸', '🎪', '🚀', '👽', '🎩', '🦑', '🍩', '🔮'];
@@ -32,9 +36,19 @@ export default function StockManagementPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
 
+  // News event state
+  const [newsEvents, setNewsEvents] = useState<CustomNewsEventResponse[]>([]);
+  const [showNewsForm, setShowNewsForm] = useState(false);
+  const [newsStockId, setNewsStockId] = useState<number | ''>('');
+  const [newsHeadline, setNewsHeadline] = useState('');
+  const [newsBody, setNewsBody] = useState('');
+  const [newsChangePct, setNewsChangePct] = useState('10');
+  const [newsSaving, setNewsSaving] = useState(false);
+  const [newsError, setNewsError] = useState<string | null>(null);
+
   useEffect(() => {
-    fetchStocks()
-      .then(setStocks)
+    Promise.all([fetchStocks(), fetchCustomNewsEvents()])
+      .then(([s, e]) => { setStocks(s); setNewsEvents(e); })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -308,7 +322,7 @@ export default function StockManagementPage() {
                 {/* Dividend Yield */}
                 <div>
                   <label className="text-sm font-medium text-gray-600">
-                    {formType === 'bond' ? 'Coupon Rate' : 'Dividend Yield'} (% per year)
+                    {formType === 'bond' ? 'Coupon Rate' : 'Dividend Yield'} (% per day)
                   </label>
                   <input
                     type="number"
@@ -370,6 +384,170 @@ export default function StockManagementPage() {
                     {saving ? 'Saving...' : editingId ? 'Update' : 'Create'}
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* News Events Section */}
+        <div className="mt-10">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-bold text-gray-800">News Events</h2>
+            <button
+              onClick={() => { setShowNewsForm(true); setNewsError(null); }}
+              className="px-4 py-2 bg-purple-500 text-white rounded-full hover:bg-purple-600 transition font-medium"
+            >
+              + Create News
+            </button>
+          </div>
+
+          {/* Pending events */}
+          {newsEvents.filter(e => !e.applied_at).length > 0 && (
+            <div className="mb-3">
+              <div className="text-sm font-medium text-amber-600 mb-1">Pending (next tick)</div>
+              {newsEvents.filter(e => !e.applied_at).map(e => (
+                <div key={e.id} className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-2 flex items-center gap-3">
+                  <div className="flex-1">
+                    <div className="font-bold text-gray-800">{e.stock_symbol}: {e.headline}</div>
+                    {e.body && <div className="text-sm text-gray-500">{e.body}</div>}
+                    <div className={`text-sm font-bold ${e.change_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {e.change_pct >= 0 ? '+' : ''}{e.change_pct}%
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await deleteCustomNewsEvent(e.id);
+                      setNewsEvents(prev => prev.filter(x => x.id !== e.id));
+                    }}
+                    className="text-red-400 hover:text-red-600 text-sm"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Applied events */}
+          {newsEvents.filter(e => e.applied_at).length > 0 && (
+            <div>
+              <div className="text-sm font-medium text-gray-400 mb-1">Recent</div>
+              {newsEvents.filter(e => e.applied_at).slice(0, 10).map(e => (
+                <div key={e.id} className="bg-gray-50 rounded-xl p-3 mb-2 flex items-center gap-3 opacity-60">
+                  <div className="flex-1">
+                    <div className="font-medium text-gray-700">{e.stock_symbol}: {e.headline}</div>
+                    <div className={`text-sm font-bold ${e.change_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {e.change_pct >= 0 ? '+' : ''}{e.change_pct}%
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {newsEvents.length === 0 && (
+            <div className="text-gray-400 text-center py-6">No news events yet</div>
+          )}
+        </div>
+
+        {/* News Form Modal */}
+        {showNewsForm && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md space-y-4">
+              <h3 className="text-lg font-bold text-gray-800">Create News Event</h3>
+
+              <div>
+                <label className="text-sm font-medium text-gray-600">Stock</label>
+                <select
+                  value={newsStockId}
+                  onChange={(e) => setNewsStockId(e.target.value ? parseInt(e.target.value) : '')}
+                  className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-purple-400"
+                >
+                  <option value="">Select a stock...</option>
+                  {stocks.map(s => (
+                    <option key={s.id} value={s.id}>{s.emoji} {s.symbol} - {s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-600">Headline</label>
+                <input
+                  type="text"
+                  value={newsHeadline}
+                  onChange={(e) => setNewsHeadline(e.target.value)}
+                  placeholder="Breaking news about this stock!"
+                  className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-purple-400"
+                  maxLength={200}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-600">Body (optional)</label>
+                <textarea
+                  value={newsBody}
+                  onChange={(e) => setNewsBody(e.target.value)}
+                  placeholder="More details about the news..."
+                  className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-purple-400"
+                  rows={2}
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-medium text-gray-600">Price Change (%)</label>
+                <input
+                  type="number"
+                  value={newsChangePct}
+                  onChange={(e) => setNewsChangePct(e.target.value)}
+                  className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-purple-400"
+                  step={1}
+                />
+                <div className="text-xs text-gray-400 mt-0.5">Positive = price up, negative = price down. Takes effect next 5-min tick.</div>
+              </div>
+
+              {newsError && (
+                <div className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{newsError}</div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => { setShowNewsForm(false); setNewsError(null); }}
+                  className="flex-1 py-2 text-gray-500 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={newsSaving}
+                  onClick={async () => {
+                    if (!newsStockId || !newsHeadline.trim()) {
+                      setNewsError('Stock and headline are required');
+                      return;
+                    }
+                    setNewsSaving(true);
+                    setNewsError(null);
+                    try {
+                      const created = await createCustomNewsEvent({
+                        stock_id: newsStockId as number,
+                        headline: newsHeadline.trim(),
+                        body: newsBody.trim() || undefined,
+                        change_pct: parseFloat(newsChangePct) || 0,
+                      });
+                      setNewsEvents(prev => [created, ...prev]);
+                      setShowNewsForm(false);
+                      setNewsHeadline('');
+                      setNewsBody('');
+                      setNewsChangePct('10');
+                      setNewsStockId('');
+                    } catch (err: any) {
+                      setNewsError(err.message || 'Failed to create event');
+                    } finally {
+                      setNewsSaving(false);
+                    }
+                  }}
+                  className="flex-1 py-2 text-white bg-purple-500 rounded-lg hover:bg-purple-600 transition font-bold disabled:opacity-50"
+                >
+                  {newsSaving ? 'Creating...' : 'Create Event'}
+                </button>
               </div>
             </div>
           </div>

@@ -3,6 +3,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Stop production service if running (so it doesn't hog port 8000)
+if systemctl is-active --quiet reading-tutor-api 2>/dev/null; then
+    echo "Stopping production reading-tutor-api service..."
+    sudo systemctl stop reading-tutor-api
+fi
+
+# Kill anything else on port 8000
+if lsof -ti:8000 >/dev/null 2>&1; then
+    echo "Killing existing process on port 8000..."
+    kill $(lsof -ti:8000) 2>/dev/null || true
+    sleep 1
+fi
+
 # Start backend
 echo "Starting backend..."
 cd "$PROJECT_DIR/backend"

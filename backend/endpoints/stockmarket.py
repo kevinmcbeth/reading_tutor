@@ -1,21 +1,23 @@
 """
 Stock Market endpoints — a modular, kid-friendly stock trading game.
 
-Prices tick once per calendar day (on first request of each new day).
-Children start with 1000 coins and can buy/sell shares.
+Prices tick every 5 minutes (on first request of each new tick).
+Children use shared reward-system coins to buy/sell shares.
 News stories are matched to the child's F&P reading level.
 """
 
+import math
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from auth import get_current_family
 from database import get_pool
 from models.api_models import (
+    CustomNewsEventCreate,
+    CustomNewsEventResponse,
     StockCreate,
-    StockDepositRequest,
     StockDetail,
     StockInfo,
     StockNewsItem,
@@ -27,50 +29,75 @@ from models.api_models import (
 
 router = APIRouter(prefix="/api/stockmarket", tags=["stockmarket"])
 
-STARTING_COINS = 0.0
+TICK_MINUTES = 5
+TICKS_PER_DAY = 24 * 60 // TICK_MINUTES
 
 
 # ---------- helpers ----------
 
-async def _ensure_market_day(pool) -> date:
+def _current_tick() -> datetime:
+    """Return the current tick timestamp (floored to TICK_MINUTES)."""
+    now = datetime.now()
+    minute = (now.minute // TICK_MINUTES) * TICK_MINUTES
+    return now.replace(minute=minute, second=0, microsecond=0)
+
+
+async def _ensure_market_tick(pool) -> datetime:
     """
-    Ensure today's prices exist. If not, simulate a new market day.
-    Returns today's date.
+    Ensure the current tick's prices exist. If not, simulate a new tick.
+    Prices change every TICK_MINUTES minutes.
     """
-    today = date.today()
+    tick = _current_tick()
     existing = await pool.fetchval(
-        "SELECT COUNT(*) FROM stock_price_history WHERE market_day = $1", today
+        "SELECT COUNT(*) FROM stock_price_history WHERE market_tick = $1", tick
     )
     if existing > 0:
-        return today
+        return tick
 
     stocks = await pool.fetch("SELECT id, current_price, volatility, dividend_yield, type FROM stocks")
-    rng = random.Random(today.toordinal())
+    rng = random.Random(int(tick.timestamp()))
+    # Scale volatility from daily to per-tick
+    vol_scale = 1.0 / math.sqrt(TICKS_PER_DAY)
 
     for stock in stocks:
         sid = stock["id"]
         price = stock["current_price"]
         vol = stock["volatility"]
 
-        # Geometric Brownian Motion-ish: mean-reverting random walk
-        change_pct = rng.gauss(0, vol)
-        # Clamp to avoid extreme moves
-        change_pct = max(-0.40, min(0.40, change_pct))
+        # Check for a pending custom event for this stock
+        custom = await pool.fetchrow(
+            """SELECT id, change_pct FROM custom_stock_events
+               WHERE stock_id = $1 AND applied_at IS NULL
+               ORDER BY created_at LIMIT 1""",
+            sid,
+        )
+
+        if custom:
+            change_pct = custom["change_pct"] / 100.0
+            await pool.execute(
+                "UPDATE custom_stock_events SET applied_at = $1 WHERE id = $2",
+                tick, custom["id"],
+            )
+        else:
+            change_pct = rng.gauss(0, vol * vol_scale)
+            change_pct = max(-0.40, min(0.40, change_pct))
+
         new_price = round(price * (1 + change_pct), 2)
-        new_price = max(1.0, new_price)  # floor at $1
+        new_price = max(1.0, new_price)
 
         await pool.execute(
-            """INSERT INTO stock_price_history (stock_id, price, change_pct, market_day)
+            """INSERT INTO stock_price_history (stock_id, price, change_pct, market_tick)
                VALUES ($1, $2, $3, $4)
-               ON CONFLICT (stock_id, market_day) DO NOTHING""",
-            sid, new_price, round(change_pct * 100, 2), today,
+               ON CONFLICT (stock_id, market_tick) DO NOTHING""",
+            sid, new_price, round(change_pct * 100, 2), tick,
         )
         await pool.execute(
             "UPDATE stocks SET current_price = $1 WHERE id = $2",
             new_price, sid,
         )
 
-    # Pay dividends and bond coupons to holders
+    # Pay dividends/coupons once per calendar day
+    today = tick.date()
     yield_stocks = [s for s in stocks if s["dividend_yield"] and s["dividend_yield"] > 0]
     if yield_stocks:
         yield_ids = [s["id"] for s in yield_stocks]
@@ -83,7 +110,7 @@ async def _ensure_market_day(pool) -> date:
         yield_map = {s["id"]: s for s in yield_stocks}
         for h in holders:
             stock = yield_map[h["stock_id"]]
-            daily_yield = stock["dividend_yield"] / 365.0
+            daily_yield = stock["dividend_yield"]
             payout = round(h["shares"] * stock["current_price"] * daily_yield, 2)
             if payout < 0.01:
                 continue
@@ -96,10 +123,6 @@ async def _ensure_market_day(pool) -> date:
             )
             if "INSERT 0 1" in result:
                 await pool.execute(
-                    "UPDATE child_stock_balances SET coins = coins + $1 WHERE child_id = $2",
-                    payout, h["child_id"],
-                )
-                await pool.execute(
                     """INSERT INTO child_stock_transactions
                        (child_id, stock_id, action, shares, price_per_share, total)
                        VALUES ($1, $2, $3, $4, $5, $6)""",
@@ -107,21 +130,34 @@ async def _ensure_market_day(pool) -> date:
                     h["shares"], stock["current_price"], payout,
                 )
 
-    return today
+    return tick
 
 
-async def _ensure_balance(pool, child_id: int) -> float:
-    """Get or create a child's coin balance."""
-    row = await pool.fetchrow(
-        "SELECT coins FROM child_stock_balances WHERE child_id = $1", child_id
+async def _get_available_coins(pool, child_id: int) -> float:
+    """Get available coins: reward balance minus net coins locked in stocks."""
+    # Reward system balance: coins earned from word conversions minus coins spent on rewards
+    coins_earned = await pool.fetchval(
+        "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1",
+        child_id,
     )
-    if row:
-        return row["coins"]
-    await pool.execute(
-        "INSERT INTO child_stock_balances (child_id, coins) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        child_id, STARTING_COINS,
+    coins_spent_rewards = await pool.fetchval(
+        "SELECT COALESCE(SUM(cost), 0) FROM redemptions WHERE child_id = $1",
+        child_id,
     )
-    return STARTING_COINS
+    reward_balance = int(coins_earned) - int(coins_spent_rewards)
+
+    # Net coins locked in stock market: buys minus sells/dividends/coupons
+    bought = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action = 'buy'",
+        child_id,
+    )
+    returned = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action != 'buy'",
+        child_id,
+    )
+    net_in_stocks = float(bought) - float(returned)
+
+    return round(reward_balance - net_in_stocks, 2)
 
 
 async def _get_child_fp_level(pool, child_id: int) -> str:
@@ -145,18 +181,17 @@ async def _verify_child_ownership(pool, family_id: int, child_id: int) -> None:
 
 @router.get("/stocks", response_model=list[StockInfo])
 async def list_stocks(family_id: int = Depends(get_current_family)):
-    """List all stocks with current prices and today's change."""
+    """List all stocks with current prices and latest tick change."""
     pool = get_pool()
-    await _ensure_market_day(pool)
-    today = date.today()
+    tick = await _ensure_market_tick(pool)
 
     rows = await pool.fetch(
         """SELECT s.*,
                   COALESCE(h.change_pct, 0) AS change_pct
            FROM stocks s
-           LEFT JOIN stock_price_history h ON h.stock_id = s.id AND h.market_day = $1
+           LEFT JOIN stock_price_history h ON h.stock_id = s.id AND h.market_tick = $1
            ORDER BY s.symbol""",
-        today,
+        tick,
     )
     return [
         StockInfo(
@@ -184,35 +219,42 @@ async def get_stock_detail(
     """Get detailed info for a single stock including price history and a news story."""
     pool = get_pool()
     await _verify_child_ownership(pool, family_id, child_id)
-    await _ensure_market_day(pool)
+    tick = await _ensure_market_tick(pool)
 
     stock = await pool.fetchrow("SELECT * FROM stocks WHERE id = $1", stock_id)
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
 
-    today = date.today()
-    today_change = await pool.fetchval(
-        "SELECT change_pct FROM stock_price_history WHERE stock_id = $1 AND market_day = $2",
-        stock_id, today,
+    tick_change = await pool.fetchval(
+        "SELECT change_pct FROM stock_price_history WHERE stock_id = $1 AND market_tick = $2",
+        stock_id, tick,
     )
 
-    # Last 30 days of history
+    # Recent price history
     history = await pool.fetch(
-        """SELECT price, change_pct, market_day FROM stock_price_history
-           WHERE stock_id = $1 ORDER BY market_day DESC LIMIT 30""",
+        """SELECT price, change_pct, market_tick FROM stock_price_history
+           WHERE stock_id = $1 ORDER BY market_tick DESC LIMIT 60""",
         stock_id,
     )
 
-    # Get a story matching level and today's direction
+    # Check for custom event story first
     fp_level = await _get_child_fp_level(pool, child_id)
-    direction = "up" if (today_change or 0) >= 0 else "down"
+    direction = "up" if (tick_change or 0) >= 0 else "down"
+
     story_row = await pool.fetchrow(
-        """SELECT headline, body FROM stock_stories
-           WHERE stock_id = $1 AND fp_level = $2 AND direction = $3
-           ORDER BY RANDOM() LIMIT 1""",
-        stock_id, fp_level, direction,
+        """SELECT headline, body FROM custom_stock_events
+           WHERE stock_id = $1 AND applied_at = $2
+           ORDER BY created_at DESC LIMIT 1""",
+        stock_id, tick,
     )
-    # Fallback: any story for this stock in the right direction
+    # Fall back to template stories
+    if not story_row:
+        story_row = await pool.fetchrow(
+            """SELECT headline, body FROM stock_stories
+               WHERE stock_id = $1 AND fp_level = $2 AND direction = $3
+               ORDER BY RANDOM() LIMIT 1""",
+            stock_id, fp_level, direction,
+        )
     if not story_row:
         story_row = await pool.fetchrow(
             """SELECT headline, body FROM stock_stories
@@ -230,7 +272,7 @@ async def get_stock_detail(
             category=stock["category"],
             description=stock["description"],
             current_price=stock["current_price"],
-            change_pct=today_change or 0,
+            change_pct=tick_change or 0,
             type=stock["type"],
             dividend_yield=stock["dividend_yield"],
         ),
@@ -238,7 +280,7 @@ async def get_stock_detail(
             StockPricePoint(
                 price=h["price"],
                 change_pct=h["change_pct"],
-                market_day=str(h["market_day"]),
+                market_day=str(h["market_tick"]),
             )
             for h in reversed(history)
         ],
@@ -247,36 +289,45 @@ async def get_stock_detail(
 
 
 @router.get("/news", response_model=list[StockNewsItem])
-async def get_daily_news(
+async def get_news(
     child_id: int = Query(..., description="Child reading the news"),
     family_id: int = Depends(get_current_family),
 ):
-    """Get today's news stories for all stocks, matched to child's reading level."""
+    """Get current tick's news stories for all stocks, matched to child's reading level."""
     pool = get_pool()
     await _verify_child_ownership(pool, family_id, child_id)
-    await _ensure_market_day(pool)
+    tick = await _ensure_market_tick(pool)
 
     fp_level = await _get_child_fp_level(pool, child_id)
-    today = date.today()
 
     stocks = await pool.fetch(
         """SELECT s.id, s.symbol, s.name, s.emoji,
                   COALESCE(h.change_pct, 0) AS change_pct
            FROM stocks s
-           LEFT JOIN stock_price_history h ON h.stock_id = s.id AND h.market_day = $1
+           LEFT JOIN stock_price_history h ON h.stock_id = s.id AND h.market_tick = $1
            ORDER BY ABS(COALESCE(h.change_pct, 0)) DESC""",
-        today,
+        tick,
     )
 
     news = []
     for s in stocks:
         direction = "up" if s["change_pct"] >= 0 else "down"
+
+        # Check for custom event story first
         story = await pool.fetchrow(
-            """SELECT headline, body FROM stock_stories
-               WHERE stock_id = $1 AND fp_level = $2 AND direction = $3
-               ORDER BY RANDOM() LIMIT 1""",
-            s["id"], fp_level, direction,
+            """SELECT headline, body FROM custom_stock_events
+               WHERE stock_id = $1 AND applied_at = $2
+               ORDER BY created_at DESC LIMIT 1""",
+            s["id"], tick,
         )
+        # Fall back to template stories
+        if not story:
+            story = await pool.fetchrow(
+                """SELECT headline, body FROM stock_stories
+                   WHERE stock_id = $1 AND fp_level = $2 AND direction = $3
+                   ORDER BY RANDOM() LIMIT 1""",
+                s["id"], fp_level, direction,
+            )
         if not story:
             story = await pool.fetchrow(
                 """SELECT headline, body FROM stock_stories
@@ -306,9 +357,9 @@ async def get_portfolio(
     """Get a child's stock portfolio: balance, holdings, and total value."""
     pool = get_pool()
     await _verify_child_ownership(pool, family_id, child_id)
-    await _ensure_market_day(pool)
+    await _ensure_market_tick(pool)
 
-    coins = await _ensure_balance(pool, child_id)
+    coins = await _get_available_coins(pool, child_id)
 
     holdings = await pool.fetch(
         """SELECT h.stock_id, h.shares, s.symbol, s.name, s.emoji, s.current_price,
@@ -337,10 +388,28 @@ async def get_portfolio(
             "dividend_yield": h["dividend_yield"],
         })
 
+    # Calculate total invested (sum of buy transactions minus sell revenue)
+    total_bought = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action = 'buy'",
+        child_id,
+    )
+    total_sold = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action = 'sell'",
+        child_id,
+    )
+    total_dividends = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action IN ('dividend', 'coupon')",
+        child_id,
+    )
+    net_invested = float(total_bought) - float(total_sold) - float(total_dividends)
+    total_gains = round(holdings_value - net_invested, 2)
+
     return StockPortfolio(
         coins=round(coins, 2),
         holdings=holdings_list,
         total_value=round(coins + holdings_value, 2),
+        total_invested=round(net_invested, 2),
+        total_gains=total_gains,
     )
 
 
@@ -353,26 +422,20 @@ async def buy_stock(
     """Buy shares of a stock."""
     pool = get_pool()
     await _verify_child_ownership(pool, family_id, child_id)
-    await _ensure_market_day(pool)
+    await _ensure_market_tick(pool)
 
     stock = await pool.fetchrow("SELECT * FROM stocks WHERE id = $1", trade.stock_id)
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
 
     total_cost = round(stock["current_price"] * trade.shares, 2)
-    coins = await _ensure_balance(pool, child_id)
+    coins = await _get_available_coins(pool, child_id)
 
     if coins < total_cost:
         raise HTTPException(
             status_code=400,
             detail=f"Not enough coins! You have {coins:.2f} but need {total_cost:.2f}",
         )
-
-    # Deduct coins
-    await pool.execute(
-        "UPDATE child_stock_balances SET coins = coins - $1 WHERE child_id = $2",
-        total_cost, child_id,
-    )
 
     # Add shares
     await pool.execute(
@@ -383,16 +446,14 @@ async def buy_stock(
         child_id, trade.stock_id, trade.shares,
     )
 
-    # Record transaction
+    # Record transaction (this is what deducts from the shared balance)
     await pool.execute(
         """INSERT INTO child_stock_transactions (child_id, stock_id, action, shares, price_per_share, total)
            VALUES ($1, $2, 'buy', $3, $4, $5)""",
         child_id, trade.stock_id, trade.shares, stock["current_price"], total_cost,
     )
 
-    new_balance = await pool.fetchval(
-        "SELECT coins FROM child_stock_balances WHERE child_id = $1", child_id
-    )
+    new_balance = await _get_available_coins(pool, child_id)
 
     return StockTradeResponse(
         action="buy",
@@ -413,7 +474,7 @@ async def sell_stock(
     """Sell shares of a stock."""
     pool = get_pool()
     await _verify_child_ownership(pool, family_id, child_id)
-    await _ensure_market_day(pool)
+    await _ensure_market_tick(pool)
 
     stock = await pool.fetchrow("SELECT * FROM stocks WHERE id = $1", trade.stock_id)
     if not stock:
@@ -432,28 +493,20 @@ async def sell_stock(
 
     total_revenue = round(stock["current_price"] * trade.shares, 2)
 
-    # Add coins
-    await pool.execute(
-        "UPDATE child_stock_balances SET coins = coins + $1 WHERE child_id = $2",
-        total_revenue, child_id,
-    )
-
     # Remove shares
     await pool.execute(
         "UPDATE child_stock_holdings SET shares = shares - $1 WHERE child_id = $2 AND stock_id = $3",
         trade.shares, child_id, trade.stock_id,
     )
 
-    # Record transaction
+    # Record transaction (this is what credits back to the shared balance)
     await pool.execute(
         """INSERT INTO child_stock_transactions (child_id, stock_id, action, shares, price_per_share, total)
            VALUES ($1, $2, 'sell', $3, $4, $5)""",
         child_id, trade.stock_id, trade.shares, stock["current_price"], total_revenue,
     )
 
-    new_balance = await pool.fetchval(
-        "SELECT coins FROM child_stock_balances WHERE child_id = $1", child_id
-    )
+    new_balance = await _get_available_coins(pool, child_id)
 
     return StockTradeResponse(
         action="sell",
@@ -463,6 +516,36 @@ async def sell_stock(
         total=total_revenue,
         coins_remaining=round(new_balance, 2),
     )
+
+
+@router.get("/portfolio/history")
+async def get_portfolio_history(
+    child_id: int = Query(..., description="Child whose portfolio history to view"),
+    family_id: int = Depends(get_current_family),
+):
+    """Get portfolio value over time based on price ticks and holdings."""
+    pool = get_pool()
+    await _verify_child_ownership(pool, family_id, child_id)
+
+    # Show how current holdings' value has changed over recent ticks
+    rows = await pool.fetch(
+        """SELECT ph.market_tick,
+                  SUM(h.shares * ph.price) AS holdings_value
+           FROM stock_price_history ph
+           JOIN child_stock_holdings h ON h.stock_id = ph.stock_id AND h.child_id = $1 AND h.shares > 0
+           GROUP BY ph.market_tick
+           ORDER BY ph.market_tick DESC
+           LIMIT 100""",
+        child_id,
+    )
+
+    return [
+        {
+            "timestamp": str(r["market_tick"]),
+            "total_value": round(float(r["holdings_value"]), 2),
+        }
+        for r in reversed(rows)
+    ]
 
 
 @router.get("/history")
@@ -501,80 +584,72 @@ async def get_transaction_history(
     ]
 
 
-@router.post("/deposit")
-async def deposit_coins(
-    body: StockDepositRequest,
-    child_id: int = Query(..., description="Child depositing coins"),
+# ---------- Admin (parent) endpoints ----------
+
+
+@router.post("/admin/news", response_model=CustomNewsEventResponse, status_code=201)
+async def create_custom_news(
+    event: CustomNewsEventCreate,
     family_id: int = Depends(get_current_family),
 ):
-    """
-    Deposit reward-system coins into the stock market balance.
-    Spends words at the child's exchange rate, converts to reward coins,
-    then adds those coins to the stock market balance.
-    """
+    """Create a custom news event that will move a stock's price on the next tick."""
     pool = get_pool()
-    await _verify_child_ownership(pool, family_id, child_id)
+    stock = await pool.fetchrow("SELECT id, symbol FROM stocks WHERE id = $1", event.stock_id)
+    if not stock:
+        raise HTTPException(status_code=404, detail="Stock not found")
 
-    # Get the child's exchange rate (child override or family default)
-    child_rate = await pool.fetchval(
-        "SELECT words_per_coin FROM children WHERE id = $1", child_id
+    row = await pool.fetchrow(
+        """INSERT INTO custom_stock_events (stock_id, family_id, headline, body, change_pct)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *""",
+        event.stock_id, family_id, event.headline, event.body, event.change_pct,
     )
-    if child_rate is None:
-        child_rate = await pool.fetchval(
-            "SELECT words_per_coin FROM families WHERE id = $1", family_id
+    return CustomNewsEventResponse(
+        id=row["id"], stock_id=row["stock_id"], stock_symbol=stock["symbol"],
+        headline=row["headline"], body=row["body"], change_pct=row["change_pct"],
+        applied_at=str(row["applied_at"]) if row["applied_at"] else None,
+        created_at=str(row["created_at"]) if row["created_at"] else None,
+    )
+
+
+@router.get("/admin/news", response_model=list[CustomNewsEventResponse])
+async def list_custom_news(
+    family_id: int = Depends(get_current_family),
+):
+    """List custom news events (pending and recent)."""
+    pool = get_pool()
+    rows = await pool.fetch(
+        """SELECT e.*, s.symbol AS stock_symbol
+           FROM custom_stock_events e
+           JOIN stocks s ON s.id = e.stock_id
+           WHERE e.family_id = $1
+           ORDER BY e.created_at DESC LIMIT 50""",
+        family_id,
+    )
+    return [
+        CustomNewsEventResponse(
+            id=r["id"], stock_id=r["stock_id"], stock_symbol=r["stock_symbol"],
+            headline=r["headline"], body=r["body"], change_pct=r["change_pct"],
+            applied_at=str(r["applied_at"]) if r["applied_at"] else None,
+            created_at=str(r["created_at"]) if r["created_at"] else None,
         )
-    rate = child_rate or 10
+        for r in rows
+    ]
 
-    words_needed = body.coins * rate
 
-    # Check available words
-    words_earned = await pool.fetchval(
-        "SELECT COALESCE(SUM(score), 0) FROM sessions WHERE child_id = $1 AND completed_at IS NOT NULL",
-        child_id,
+@router.delete("/admin/news/{event_id}")
+async def delete_custom_news(
+    event_id: int,
+    family_id: int = Depends(get_current_family),
+):
+    """Cancel a pending custom news event."""
+    pool = get_pool()
+    result = await pool.execute(
+        "DELETE FROM custom_stock_events WHERE id = $1 AND family_id = $2 AND applied_at IS NULL",
+        event_id, family_id,
     )
-    words_converted = await pool.fetchval(
-        "SELECT COALESCE(SUM(words_spent), 0) FROM coin_conversions WHERE child_id = $1",
-        child_id,
-    )
-    words_available = int(words_earned) - int(words_converted)
-
-    if words_available < words_needed:
-        max_coins = words_available // rate
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough words! Need {words_needed} words ({body.coins} coins x {rate} words/coin), "
-                   f"but only have {words_available} words available. You can deposit up to {max_coins} coins.",
-        )
-
-    # Record the word conversion
-    await pool.execute(
-        "INSERT INTO coin_conversions (child_id, words_spent, coins_earned) VALUES ($1, $2, $3)",
-        child_id, words_needed, body.coins,
-    )
-
-    # Add to stock market balance
-    await pool.execute(
-        """INSERT INTO child_stock_balances (child_id, coins)
-           VALUES ($1, $2)
-           ON CONFLICT (child_id)
-           DO UPDATE SET coins = child_stock_balances.coins + $2""",
-        child_id, float(body.coins),
-    )
-
-    new_balance = await pool.fetchval(
-        "SELECT coins FROM child_stock_balances WHERE child_id = $1", child_id
-    )
-    new_words_available = words_available - words_needed
-
-    return {
-        "coins_deposited": body.coins,
-        "words_spent": words_needed,
-        "stock_balance": round(new_balance, 2),
-        "words_remaining": new_words_available,
-    }
-
-
-# ---------- Admin (parent) endpoints ----------
+    if "DELETE 0" in result:
+        raise HTTPException(status_code=404, detail="Event not found or already applied")
+    return {"status": "deleted"}
 
 
 @router.post("/admin/stocks", response_model=StockInfo, status_code=201)
@@ -663,6 +738,7 @@ async def delete_stock(
         )
 
     # Clean up related data
+    await pool.execute("DELETE FROM custom_stock_events WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM dividend_payouts WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM stock_stories WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM stock_price_history WHERE stock_id = $1", stock_id)

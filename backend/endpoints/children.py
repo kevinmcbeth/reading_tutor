@@ -9,6 +9,7 @@ from models.api_models import (
     LeaderboardEntry,
     LevelLeaderboardEntry,
     MAX_PAGE_LIMIT,
+    PortfolioLeaderboardEntry,
 )
 
 router = APIRouter(prefix="/api/children", tags=["children"])
@@ -100,6 +101,50 @@ async def level_leaderboard(family_id: int = Depends(get_current_family)):
         )
         for r in rows
     ]
+
+
+@router.get("/leaderboard/portfolio", response_model=list[PortfolioLeaderboardEntry])
+async def portfolio_leaderboard(family_id: int = Depends(get_current_family)):
+    pool = get_pool()
+    rows = await pool.fetch(
+        """SELECT c.id, c.name, c.avatar,
+                  COALESCE(SUM(h.shares * s.current_price), 0) AS holdings_value
+           FROM children c
+           LEFT JOIN child_stock_holdings h ON h.child_id = c.id AND h.shares > 0
+           LEFT JOIN stocks s ON s.id = h.stock_id
+           WHERE c.family_id = $1
+           GROUP BY c.id, c.name, c.avatar
+           ORDER BY holdings_value DESC
+           LIMIT 20""",
+        family_id,
+    )
+
+    results = []
+    for r in rows:
+        # Coin balance: earned - spent on rewards - net in stocks
+        coins_earned = await pool.fetchval(
+            "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1", r["id"],
+        )
+        coins_spent = await pool.fetchval(
+            "SELECT COALESCE(SUM(cost), 0) FROM redemptions WHERE child_id = $1", r["id"],
+        )
+        bought = await pool.fetchval(
+            "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action = 'buy'", r["id"],
+        )
+        returned = await pool.fetchval(
+            "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action != 'buy'", r["id"],
+        )
+        coins = float(coins_earned) - float(coins_spent) - (float(bought) - float(returned))
+        total = round(coins + float(r["holdings_value"]), 2)
+        if total > 0:
+            results.append(PortfolioLeaderboardEntry(
+                name=r["name"],
+                avatar=r["avatar"],
+                portfolio_value=total,
+            ))
+
+    results.sort(key=lambda x: x.portfolio_value, reverse=True)
+    return results
 
 
 @router.post("", response_model=ChildResponse, status_code=201)

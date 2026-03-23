@@ -115,7 +115,16 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.text().catch(() => '');
     console.error(`API error ${response.status} ${url}:`, body);
-    throw new Error(`API error: ${response.status} ${response.statusText}`);
+    let message = `API error: ${response.status} ${response.statusText}`;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed.detail) {
+        message = typeof parsed.detail === 'string'
+          ? parsed.detail
+          : JSON.stringify(parsed.detail);
+      }
+    } catch { /* use default message */ }
+    throw new Error(message);
   }
   return response.json();
 }
@@ -190,6 +199,16 @@ export interface LevelLeaderboardEntry {
 
 export async function fetchLevelLeaderboard(): Promise<LevelLeaderboardEntry[]> {
   return fetchJson<LevelLeaderboardEntry[]>('/children/leaderboard/levels');
+}
+
+export interface PortfolioLeaderboardEntry {
+  name: string;
+  avatar: string | null;
+  portfolio_value: number;
+}
+
+export async function fetchPortfolioLeaderboard(): Promise<PortfolioLeaderboardEntry[]> {
+  return fetchJson<PortfolioLeaderboardEntry[]>('/children/leaderboard/portfolio');
 }
 
 export async function fetchChild(id: string): Promise<ChildResponse> {
@@ -475,6 +494,8 @@ export interface StockPortfolioResponse {
     value: number;
   }[];
   total_value: number;
+  total_invested: number;
+  total_gains: number;
 }
 
 export interface StockNewsItemResponse {
@@ -508,6 +529,10 @@ export async function fetchStockPortfolio(childId: string): Promise<StockPortfol
   return fetchJson<StockPortfolioResponse>(`/stockmarket/portfolio?child_id=${childId}`);
 }
 
+export async function fetchPortfolioHistory(childId: string): Promise<{ timestamp: string; total_value: number }[]> {
+  return fetchJson<{ timestamp: string; total_value: number }[]>(`/stockmarket/portfolio/history?child_id=${childId}`);
+}
+
 export async function fetchStockNews(childId: string): Promise<StockNewsItemResponse[]> {
   return fetchJson<StockNewsItemResponse[]>(`/stockmarket/news?child_id=${childId}`);
 }
@@ -526,12 +551,6 @@ export async function sellStock(stockId: number, shares: number, childId: string
   });
 }
 
-export async function depositStockCoins(childId: string, coins: number): Promise<{ coins_deposited: number; words_spent: number; stock_balance: number; words_remaining: number }> {
-  return fetchJson(`/stockmarket/deposit?child_id=${childId}`, {
-    method: 'POST',
-    body: JSON.stringify({ coins }),
-  });
-}
 
 export async function createStock(data: {
   symbol: string; name: string; emoji: string; category: string;
@@ -690,4 +709,33 @@ export async function setMathExchangeRate(mathProblemsPerCoin: number, childId?:
     method: 'PUT',
     body: JSON.stringify({ math_problems_per_coin: mathProblemsPerCoin, child_id: childId ?? null }),
   });
+}
+
+// Custom news events
+export interface CustomNewsEventResponse {
+  id: number;
+  stock_id: number;
+  stock_symbol?: string;
+  headline: string;
+  body?: string;
+  change_pct: number;
+  applied_at?: string;
+  created_at?: string;
+}
+
+export async function createCustomNewsEvent(data: {
+  stock_id: number; headline: string; body?: string; change_pct: number;
+}): Promise<CustomNewsEventResponse> {
+  return fetchJson<CustomNewsEventResponse>('/stockmarket/admin/news', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchCustomNewsEvents(): Promise<CustomNewsEventResponse[]> {
+  return fetchJson<CustomNewsEventResponse[]>('/stockmarket/admin/news');
+}
+
+export async function deleteCustomNewsEvent(eventId: number): Promise<void> {
+  await fetchJson(`/stockmarket/admin/news/${eventId}`, { method: 'DELETE' });
 }

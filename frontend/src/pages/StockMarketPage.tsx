@@ -5,12 +5,10 @@ import {
   fetchStocks,
   fetchStockPortfolio,
   fetchStockNews,
-  fetchBalance,
-  depositStockCoins,
+  fetchPortfolioHistory,
   StockInfoResponse,
   StockPortfolioResponse,
   StockNewsItemResponse,
-  BalanceResponse,
 } from '../services/api';
 
 function PriceChange({ pct }: { pct: number }) {
@@ -23,6 +21,68 @@ function PriceChange({ pct }: { pct: number }) {
   );
 }
 
+function PortfolioChart({ points: data }: { points: { timestamp: string; total_value: number }[] }) {
+  if (data.length < 2) return null;
+  const values = data.map(d => d.total_value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  const w = 300, h = 120, padX = 6, padTop = 20, padBot = 22;
+  const chartH = h - padTop - padBot;
+
+  const pts = values.map((v, i) => {
+    const x = padX + (i / (values.length - 1)) * (w - padX * 2);
+    const y = padTop + chartH - ((v - min) / range) * chartH;
+    return { x, y };
+  });
+  const line = pts.map(p => `${p.x},${p.y}`).join(' ');
+  const last = values[values.length - 1];
+  const first = values[0];
+  const color = last >= first ? '#10b981' : '#ef4444';
+
+  // Time labels — show first, middle, last
+  const fmtTime = (ts: string) => {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  };
+  const labelIdxs = [0, Math.floor(data.length / 2), data.length - 1];
+
+  return (
+    <div>
+      <div className="flex justify-between text-xs text-gray-500 mb-1">
+        <span>{min.toFixed(0)}</span>
+        <span className={`font-bold ${last >= first ? 'text-green-600' : 'text-red-500'}`}>
+          Current: {last.toFixed(0)}
+        </span>
+        <span>{max.toFixed(0)}</span>
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" style={{ height: 100 }}>
+        {/* Grid lines */}
+        <line x1={padX} y1={padTop} x2={w - padX} y2={padTop} stroke="#e5e7eb" strokeWidth="0.5" />
+        <line x1={padX} y1={padTop + chartH / 2} x2={w - padX} y2={padTop + chartH / 2} stroke="#e5e7eb" strokeWidth="0.5" />
+        <line x1={padX} y1={padTop + chartH} x2={w - padX} y2={padTop + chartH} stroke="#e5e7eb" strokeWidth="0.5" />
+        {/* Line */}
+        <polyline points={line} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {/* End dot */}
+        <circle cx={pts[pts.length - 1].x} cy={pts[pts.length - 1].y} r="3" fill={color} />
+        {/* Time labels */}
+        {labelIdxs.map((idx, i) => (
+          <text
+            key={i}
+            x={pts[idx].x}
+            y={h - 4}
+            textAnchor={i === 0 ? 'start' : i === labelIdxs.length - 1 ? 'end' : 'middle'}
+            fontSize="9"
+            fill="#9ca3af"
+          >
+            {fmtTime(data[idx].timestamp)}
+          </text>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
 export default function StockMarketPage() {
   const navigate = useNavigate();
   const { selectedChild } = useAuth();
@@ -31,51 +91,30 @@ export default function StockMarketPage() {
   const [stocks, setStocks] = useState<StockInfoResponse[]>([]);
   const [portfolio, setPortfolio] = useState<StockPortfolioResponse | null>(null);
   const [news, setNews] = useState<StockNewsItemResponse[]>([]);
-  const [balance, setBalance] = useState<BalanceResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'market' | 'news' | 'portfolio'>('market');
   const [expandedNews, setExpandedNews] = useState<number | null>(null);
-  const [depositAmount, setDepositAmount] = useState(10);
-  const [depositing, setDepositing] = useState(false);
-  const [depositMsg, setDepositMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [balanceHistory, setBalanceHistory] = useState<{ timestamp: string; total_value: number }[]>([]);
 
   const loadData = useCallback(async () => {
     if (!childId) return;
     try {
-      const [s, p, n, b] = await Promise.all([
+      const [s, p, n, bh] = await Promise.all([
         fetchStocks(),
         fetchStockPortfolio(childId),
         fetchStockNews(childId),
-        fetchBalance(childId).catch(() => null),
+        fetchPortfolioHistory(childId).catch(() => []),
       ]);
       setStocks(s);
       setPortfolio(p);
       setNews(n);
-      setBalance(b);
+      setBalanceHistory(bh);
     } catch (err) {
       console.error('Failed to load stock data:', err);
     } finally {
       setLoading(false);
     }
   }, [childId]);
-
-  const handleDeposit = async () => {
-    if (!childId || depositAmount < 1) return;
-    setDepositing(true);
-    setDepositMsg(null);
-    try {
-      const result = await depositStockCoins(childId, depositAmount);
-      setDepositMsg({
-        text: `Deposited ${result.coins_deposited} coins! (${result.words_spent} words used)`,
-        type: 'success',
-      });
-      await loadData();
-    } catch (err: any) {
-      setDepositMsg({ text: err.message || 'Deposit failed', type: 'error' });
-    } finally {
-      setDepositing(false);
-    }
-  };
 
   useEffect(() => {
     if (!childId) { navigate('/'); return; }
@@ -112,7 +151,7 @@ export default function StockMarketPage() {
 
       {/* Balance bar */}
       {portfolio && (
-        <div className="bg-white/90 rounded-2xl shadow-xl px-6 py-3 mb-4 flex gap-6 text-center">
+        <div className="bg-white/90 rounded-2xl shadow-xl px-6 py-3 mb-4 flex gap-4 text-center flex-wrap justify-center">
           <div>
             <div className="text-xs text-gray-400 uppercase tracking-wide">Coins</div>
             <div className="text-xl font-extrabold text-yellow-600">{portfolio.coins.toFixed(0)}</div>
@@ -128,6 +167,13 @@ export default function StockMarketPage() {
           <div>
             <div className="text-xs text-gray-400 uppercase tracking-wide">Total</div>
             <div className="text-xl font-extrabold text-blue-600">{portfolio.total_value.toFixed(0)}</div>
+          </div>
+          <div className="border-l border-gray-200" />
+          <div>
+            <div className="text-xs text-gray-400 uppercase tracking-wide">Gains</div>
+            <div className={`text-xl font-extrabold ${portfolio.total_gains >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+              {portfolio.total_gains >= 0 ? '+' : ''}{portfolio.total_gains.toFixed(0)}
+            </div>
           </div>
         </div>
       )}
@@ -151,39 +197,102 @@ export default function StockMarketPage() {
 
       {/* Content */}
       <div className="w-full max-w-lg">
-        {tab === 'market' && (
-          <div className="space-y-2">
-            {stocks.map((stock) => (
-              <button
-                key={stock.id}
-                onClick={() => navigate(`/stockmarket/${stock.id}`)}
-                className="w-full bg-white/90 rounded-2xl shadow-lg p-4 flex items-center gap-3 hover:scale-[1.02] transition-all active:scale-[0.98]"
-              >
-                <span className="text-3xl">{stock.emoji}</span>
-                <div className="flex-1 text-left">
-                  <div className="font-bold text-gray-800">
-                    {stock.name}
-                    {stock.type === 'bond' && (
-                      <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">BOND</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    {stock.symbol}
-                    {stock.dividend_yield > 0 && (
-                      <span className="ml-1 text-green-600 font-medium">
-                        {(stock.dividend_yield * 100).toFixed(1)}% yield
-                      </span>
-                    )}
+        {tab === 'market' && (() => {
+          const holdingsMap = new Map<number, { shares: number; value: number }>();
+          portfolio?.holdings.forEach((h: any) => holdingsMap.set(h.stock_id, { shares: h.shares, value: h.value }));
+          const sorted = [...stocks].sort((a, b) => b.current_price - a.current_price);
+          const myStocks = sorted.filter(s => holdingsMap.has(s.id));
+
+          return (
+            <div className="space-y-3">
+              {/* Track My Stocks */}
+              {myStocks.length > 0 && (
+                <div className="bg-white/90 rounded-2xl shadow-lg p-4">
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">My Stocks</div>
+                  {balanceHistory.length >= 2 && (
+                    <div className="mb-3">
+                      <PortfolioChart points={balanceHistory} />
+                    </div>
+                  )}
+                  {portfolio && (
+                    <div className="flex gap-4 text-center text-sm mb-3">
+                      <div className="flex-1 bg-gray-50 rounded-xl py-2">
+                        <div className="text-xs text-gray-400">Invested</div>
+                        <div className="font-bold text-gray-700">{(portfolio.total_value - portfolio.coins).toFixed(0)}</div>
+                      </div>
+                      <div className="flex-1 bg-gray-50 rounded-xl py-2">
+                        <div className="text-xs text-gray-400">Gains</div>
+                        <div className={`font-bold ${portfolio.total_gains >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {portfolio.total_gains >= 0 ? '+' : ''}{portfolio.total_gains.toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    {myStocks.map(s => {
+                      const h = holdingsMap.get(s.id)!;
+                      return (
+                        <button
+                          key={s.id}
+                          onClick={() => navigate(`/stockmarket/${s.id}`)}
+                          className="w-full flex items-center gap-2 p-2 rounded-xl hover:bg-gray-50 transition"
+                        >
+                          <span className="text-xl">{s.emoji}</span>
+                          <span className="text-sm font-bold text-gray-700 flex-1 text-left">{s.symbol}</span>
+                          <PriceChange pct={s.change_pct} />
+                          <div className="text-right ml-2">
+                            <div className="text-sm font-bold text-gray-800">{h.value.toFixed(0)}</div>
+                            <div className="text-[10px] text-gray-400">{h.shares} shares</div>
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="font-extrabold text-gray-800">{stock.current_price.toFixed(2)}</div>
-                  <PriceChange pct={stock.change_pct} />
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
+              )}
+
+              {/* Stock list sorted by price */}
+              {sorted.map((stock) => {
+                const holding = holdingsMap.get(stock.id);
+                return (
+                  <button
+                    key={stock.id}
+                    onClick={() => navigate(`/stockmarket/${stock.id}`)}
+                    className="w-full bg-white/90 rounded-2xl shadow-lg p-4 flex items-center gap-3 hover:scale-[1.02] transition-all active:scale-[0.98]"
+                  >
+                    <span className="text-3xl">{stock.emoji}</span>
+                    <div className="flex-1 text-left">
+                      <div className="font-bold text-gray-800">
+                        {stock.name}
+                        {stock.type === 'bond' && (
+                          <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">BOND</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {stock.symbol}
+                        {stock.dividend_yield > 0 && (
+                          <span className="ml-1 text-green-600 font-medium">
+                            {(stock.dividend_yield * 100).toFixed(1)}% yield
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-extrabold text-gray-800">{stock.current_price.toFixed(2)}</div>
+                      <PriceChange pct={stock.change_pct} />
+                    </div>
+                    {holding && (
+                      <div className="text-right border-l border-gray-200 pl-3 ml-1">
+                        <div className="text-sm font-bold text-purple-600">{holding.shares}</div>
+                        <div className="text-[10px] text-gray-400">owned</div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {tab === 'news' && (
           <div className="space-y-3">
@@ -221,58 +330,6 @@ export default function StockMarketPage() {
 
         {tab === 'portfolio' && portfolio && (
           <div className="space-y-3">
-            {/* Deposit words → coins */}
-            <div className="bg-yellow-50 border-2 border-yellow-200 rounded-2xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-2xl">📖</span>
-                <div className="font-bold text-gray-800">Add Coins from Reading</div>
-              </div>
-              {balance && (
-                <div className="text-sm text-gray-500 mb-3">
-                  You have <strong className="text-gray-800">{balance.words_available}</strong> words available
-                  {balance.words_per_coin > 0 && (
-                    <> ({balance.words_per_coin} words = 1 coin)</>
-                  )}
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setDepositAmount(Math.max(1, depositAmount - 5))}
-                  className="w-9 h-9 rounded-full bg-yellow-100 hover:bg-yellow-200 font-bold text-lg transition"
-                >
-                  -
-                </button>
-                <input
-                  type="number"
-                  min={1}
-                  value={depositAmount}
-                  onChange={(e) => setDepositAmount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-20 text-center text-xl font-extrabold border-2 border-yellow-200 rounded-xl py-1 focus:outline-none focus:border-yellow-400"
-                />
-                <button
-                  onClick={() => setDepositAmount(depositAmount + 5)}
-                  className="w-9 h-9 rounded-full bg-yellow-100 hover:bg-yellow-200 font-bold text-lg transition"
-                >
-                  +
-                </button>
-                <span className="text-sm text-gray-500">coins</span>
-                <button
-                  onClick={handleDeposit}
-                  disabled={depositing}
-                  className="ml-auto px-5 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-bold rounded-xl transition disabled:opacity-40"
-                >
-                  {depositing ? '...' : 'Deposit'}
-                </button>
-              </div>
-              {depositMsg && (
-                <div className={`mt-2 text-sm font-medium rounded-xl px-3 py-1.5 ${
-                  depositMsg.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                }`}>
-                  {depositMsg.text}
-                </div>
-              )}
-            </div>
-
             {/* Holdings */}
             {portfolio.holdings.length === 0 ? (
               <div className="bg-white/90 rounded-2xl p-6 text-center">

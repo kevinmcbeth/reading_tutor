@@ -89,6 +89,12 @@ class LevelLeaderboardEntry(BaseModel):
     sort_order: int
 
 
+class PortfolioLeaderboardEntry(BaseModel):
+    name: str
+    avatar: Optional[str]
+    portfolio_value: float
+
+
 class ChildResponse(BaseModel):
     id: int
     name: str
@@ -350,6 +356,8 @@ class StockPortfolio(BaseModel):
     coins: float
     holdings: list[dict]
     total_value: float
+    total_invested: float = 0.0
+    total_gains: float = 0.0
 
 
 class StockTradeRequest(BaseModel):
@@ -385,15 +393,37 @@ class StockNewsItem(BaseModel):
     change_pct: float
 
 
-class StockDepositRequest(BaseModel):
-    coins: int
+class CustomNewsEventCreate(BaseModel):
+    stock_id: int
+    headline: str
+    body: Optional[str] = None
+    change_pct: float
 
-    @field_validator("coins")
+    @field_validator("change_pct")
     @classmethod
-    def positive_coins(cls, v: int) -> int:
-        if v < 1:
-            raise ValueError("Must deposit at least 1 coin")
+    def validate_change(cls, v: float) -> float:
+        if v < -90 or v > 500:
+            raise ValueError("Change must be between -90% and +500%")
+        return round(v, 2)
+
+    @field_validator("headline")
+    @classmethod
+    def validate_headline(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 200:
+            raise ValueError("Headline must be 1-200 characters")
         return v
+
+
+class CustomNewsEventResponse(BaseModel):
+    id: int
+    stock_id: int
+    stock_symbol: Optional[str] = None
+    headline: str
+    body: Optional[str]
+    change_pct: float
+    applied_at: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class StockCreate(BaseModel):
@@ -417,8 +447,8 @@ class StockCreate(BaseModel):
     @field_validator("dividend_yield")
     @classmethod
     def validate_dividend_yield(cls, v: float) -> float:
-        if v < 0 or v > 1.0:
-            raise ValueError("Dividend yield must be between 0 and 1.0")
+        if v < 0 or v > 100.0:
+            raise ValueError("Dividend yield must be between 0 and 10,000%")
         return round(v, 4)
 
     @field_validator("symbol")

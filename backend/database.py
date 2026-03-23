@@ -214,8 +214,8 @@ CREATE TABLE IF NOT EXISTS stock_price_history (
     stock_id INTEGER REFERENCES stocks(id) NOT NULL,
     price REAL NOT NULL,
     change_pct REAL NOT NULL DEFAULT 0,
-    market_day DATE NOT NULL,
-    UNIQUE(stock_id, market_day)
+    market_tick TIMESTAMP NOT NULL,
+    UNIQUE(stock_id, market_tick)
 );
 
 CREATE TABLE IF NOT EXISTS stock_stories (
@@ -261,8 +261,30 @@ CREATE TABLE IF NOT EXISTS dividend_payouts (
     UNIQUE(child_id, stock_id, market_day)
 );
 
-CREATE INDEX IF NOT EXISTS idx_dividend_payouts_day ON dividend_payouts(market_day);
-CREATE INDEX IF NOT EXISTS idx_stock_price_history_stock_day ON stock_price_history(stock_id, market_day DESC);
+CREATE TABLE IF NOT EXISTS custom_stock_events (
+    id SERIAL PRIMARY KEY,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    family_id INTEGER REFERENCES families(id) NOT NULL,
+    headline TEXT NOT NULL,
+    body TEXT,
+    change_pct REAL NOT NULL,
+    applied_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_custom_stock_events_pending
+    ON custom_stock_events(stock_id) WHERE applied_at IS NULL;
+
+-- Migration: stock_price_history market_day -> market_tick (hourly/5-min ticks)
+DO $$ BEGIN
+    ALTER TABLE stock_price_history RENAME COLUMN market_day TO market_tick;
+EXCEPTION WHEN undefined_column THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE stock_price_history ALTER COLUMN market_tick TYPE TIMESTAMP USING market_tick::timestamp;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_stock_price_history_stock_tick ON stock_price_history(stock_id, market_tick DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_stories_stock_level_dir ON stock_stories(stock_id, fp_level, direction);
 CREATE INDEX IF NOT EXISTS idx_child_stock_holdings_child ON child_stock_holdings(child_id);
 CREATE INDEX IF NOT EXISTS idx_child_stock_transactions_child ON child_stock_transactions(child_id, created_at DESC);
