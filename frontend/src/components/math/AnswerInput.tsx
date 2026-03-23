@@ -14,11 +14,50 @@ interface AnswerInputProps {
 
 const BUTTON_BASE = 'text-3xl font-bold rounded-2xl shadow transition-all duration-150 active:scale-95 select-none';
 
-/** Extract the first number from a speech transcript. */
+// --- Spoken number word → integer parser (mirrors backend number_parser.py) ---
+
+const ONES: Record<string, number> = {
+  zero: 0, oh: 0, o: 0,
+  one: 1, two: 2, three: 3, four: 4, five: 5,
+  six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13,
+  fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17,
+  eighteen: 18, nineteen: 19,
+};
+
+const TENS: Record<string, number> = {
+  twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+
+function parseWords(words: string[]): number | null {
+  if (!words.length) return null;
+  let total = 0;
+  let current = 0;
+  for (const word of words) {
+    const parts = word.split('-');
+    for (const part of parts) {
+      if (part in ONES) { current += ONES[part]; }
+      else if (part in TENS) { current += TENS[part]; }
+      else if (part === 'hundred') { current = (current || 1) * 100; }
+      else if (part === 'thousand') { current = (current || 1) * 1000; total += current; current = 0; }
+      else if (part === 'and') { continue; }
+      else { return null; }
+    }
+  }
+  return total + current;
+}
+
+/** Extract a number from a speech transcript — tries digits first, then word-form. */
 function extractNumber(text: string): string | null {
   // Try raw digits first
   const digitMatch = text.match(/\d+/);
   if (digitMatch) return digitMatch[0];
+  // Try word-form parsing
+  const cleaned = text.toLowerCase().replace(/[^a-z0-9\s-]/g, '').trim();
+  const words = cleaned.split(/\s+/).filter(w => w !== 'and' && w !== 'is' && w !== 'equals' && w !== 'the' && w !== 'answer' || w in ONES || w in TENS);
+  const parsed = parseWords(words);
+  if (parsed !== null && parsed >= 0) return String(parsed);
   return null;
 }
 
