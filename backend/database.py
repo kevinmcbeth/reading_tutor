@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS families (
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     display_name TEXT,
+    words_per_coin INTEGER NOT NULL DEFAULT 10,
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -155,8 +156,17 @@ CREATE TABLE IF NOT EXISTS redemptions (
     redeemed_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS coin_conversions (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    words_spent INTEGER NOT NULL,
+    coins_earned INTEGER NOT NULL,
+    converted_at TIMESTAMP DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS idx_reward_items_family ON reward_items(family_id);
 CREATE INDEX IF NOT EXISTS idx_redemptions_child ON redemptions(child_id);
+CREATE INDEX IF NOT EXISTS idx_coin_conversions_child ON coin_conversions(child_id);
 
 -- Analytics & scaling indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_child_completed ON sessions(child_id, completed_at) WHERE completed_at IS NOT NULL;

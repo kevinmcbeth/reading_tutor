@@ -333,9 +333,11 @@ export interface RedemptionResponse {
 
 export interface BalanceResponse {
   child_id: number;
-  total_earned: number;
-  total_spent: number;
-  balance: number;
+  words_available: number;
+  words_per_coin: number;
+  coins_balance: number;
+  total_coins_earned: number;
+  total_coins_spent: number;
 }
 
 export interface RedeemResult {
@@ -380,4 +382,28 @@ export async function redeemItem(itemId: number, childId: string): Promise<Redee
 
 export async function fetchRedemptionHistory(childId: string): Promise<RedemptionResponse[]> {
   return fetchJson<RedemptionResponse[]>(`/rewards/history/${childId}`);
+}
+
+export interface ConvertResult {
+  detail: string;
+  words_spent: number;
+  coins_earned: number;
+  words_remaining: number;
+}
+
+export async function convertWordsToCoins(childId: string, coins: number): Promise<ConvertResult> {
+  return fetchJson<ConvertResult>(`/rewards/convert/${childId}?coins=${coins}`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchExchangeRate(): Promise<{ words_per_coin: number }> {
+  return fetchJson<{ words_per_coin: number }>('/rewards/exchange-rate');
+}
+
+export async function setExchangeRate(wordsPerCoin: number): Promise<{ words_per_coin: number }> {
+  return fetchJson<{ words_per_coin: number }>('/rewards/exchange-rate', {
+    method: 'PUT',
+    body: JSON.stringify({ words_per_coin: wordsPerCoin }),
+  });
 }

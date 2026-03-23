@@ -5,6 +5,7 @@ import {
   fetchRewardItems,
   fetchBalance,
   redeemItem,
+  convertWordsToCoins,
   fetchRedemptionHistory,
   RewardItemResponse,
   BalanceResponse,
@@ -22,6 +23,9 @@ export default function RewardShopPage() {
   const [showSuccess, setShowSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [showConvert, setShowConvert] = useState(false);
+  const [convertAmount, setConvertAmount] = useState('');
+  const [converting, setConverting] = useState(false);
 
   const childId = selectedChild?.id;
 
@@ -63,7 +67,28 @@ export default function RewardShopPage() {
     }
   };
 
-  const canAfford = (cost: number) => balance ? balance.balance >= cost : false;
+  const handleConvert = async () => {
+    if (!childId || converting) return;
+    const coins = parseInt(convertAmount);
+    if (isNaN(coins) || coins < 1) return;
+    setConverting(true);
+    setError(null);
+    try {
+      await convertWordsToCoins(childId, coins);
+      setShowConvert(false);
+      setConvertAmount('');
+      await loadData();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Conversion failed';
+      setError(message);
+      setTimeout(() => setError(null), 4000);
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const canAfford = (cost: number) => balance ? balance.coins_balance >= cost : false;
+  const maxCoinsConvertible = balance ? Math.floor(balance.words_available / balance.words_per_coin) : 0;
 
   if (loading) {
     return (
@@ -75,8 +100,8 @@ export default function RewardShopPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-amber-400 via-orange-300 to-yellow-200 p-6">
-      {/* Header */}
       <div className="max-w-4xl mx-auto">
+        {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <button
             onClick={() => navigate('/')}
@@ -95,16 +120,36 @@ export default function RewardShopPage() {
           </button>
         </div>
 
-        {/* Balance Card */}
-        <div className="bg-white/90 rounded-3xl p-6 shadow-xl mb-8 text-center">
-          <div className="text-lg text-gray-500 mb-1">
-            {selectedChild?.name}'s Word Balance
+        {/* Balance Cards */}
+        <div className="grid grid-cols-2 gap-4 mb-8">
+          {/* Words Balance */}
+          <div className="bg-white/90 rounded-3xl p-5 shadow-xl text-center">
+            <div className="text-sm text-gray-500 mb-1">Words Available</div>
+            <div className="text-4xl font-extrabold text-green-600 mb-1">
+              {balance?.words_available ?? 0}
+            </div>
+            <button
+              onClick={() => setShowConvert(true)}
+              disabled={maxCoinsConvertible < 1}
+              className={`text-sm px-4 py-1.5 rounded-full font-medium transition mt-1 ${
+                maxCoinsConvertible >= 1
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+              }`}
+            >
+              Convert to coins
+            </button>
           </div>
-          <div className="text-6xl font-extrabold text-amber-600 mb-2">
-            {balance?.balance ?? 0}
-          </div>
-          <div className="text-sm text-gray-400">
-            {balance?.total_earned ?? 0} earned &middot; {balance?.total_spent ?? 0} spent
+
+          {/* Coins Balance */}
+          <div className="bg-white/90 rounded-3xl p-5 shadow-xl text-center">
+            <div className="text-sm text-gray-500 mb-1">Coins</div>
+            <div className="text-4xl font-extrabold text-amber-600 mb-1">
+              <span className="text-3xl">🪙</span> {balance?.coins_balance ?? 0}
+            </div>
+            <div className="text-xs text-gray-400 mt-1">
+              {balance?.words_per_coin ?? 10} words = 1 coin
+            </div>
           </div>
         </div>
 
@@ -125,13 +170,66 @@ export default function RewardShopPage() {
           </div>
         )}
 
+        {/* Convert Modal */}
+        {showConvert && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">Convert Words to Coins</h2>
+              <p className="text-gray-500 mb-1">
+                {balance?.words_per_coin} words = 1 🪙
+              </p>
+              <p className="text-sm text-gray-400 mb-6">
+                You have {balance?.words_available} words (up to {maxCoinsConvertible} coins)
+              </p>
+
+              <input
+                type="number"
+                value={convertAmount}
+                onChange={e => setConvertAmount(e.target.value)}
+                placeholder="How many coins?"
+                min="1"
+                max={maxCoinsConvertible}
+                className="w-full text-2xl p-4 border-2 border-gray-200 rounded-2xl mb-2 text-center focus:border-amber-400 focus:outline-none"
+                autoFocus
+              />
+              {convertAmount && parseInt(convertAmount) > 0 && (
+                <p className="text-sm text-gray-500 mb-4">
+                  Costs {parseInt(convertAmount) * (balance?.words_per_coin ?? 10)} words
+                </p>
+              )}
+
+              <div className="flex gap-3 mt-4">
+                <button
+                  onClick={() => { setShowConvert(false); setConvertAmount(''); }}
+                  className="flex-1 py-3 text-gray-500 bg-gray-100 rounded-full hover:bg-gray-200 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { setConvertAmount(String(maxCoinsConvertible)); }}
+                  className="py-3 px-4 text-green-700 bg-green-100 rounded-full hover:bg-green-200 transition font-medium"
+                >
+                  Max
+                </button>
+                <button
+                  onClick={handleConvert}
+                  disabled={!convertAmount || parseInt(convertAmount) < 1 || parseInt(convertAmount) > maxCoinsConvertible || converting}
+                  className="flex-1 py-3 text-white bg-amber-500 rounded-full hover:bg-amber-600 transition font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {converting ? 'Converting...' : 'Convert!'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showHistory ? (
           /* Redemption History */
           <div>
             <h2 className="text-2xl font-bold text-white mb-4 drop-shadow">Redemption History</h2>
             {history.length === 0 ? (
               <div className="bg-white/80 rounded-3xl p-8 text-center text-gray-500 text-lg">
-                No redemptions yet. Start reading to earn words!
+                No redemptions yet. Start reading to earn coins!
               </div>
             ) : (
               <div className="space-y-3">
@@ -144,7 +242,7 @@ export default function RewardShopPage() {
                         {r.redeemed_at ? new Date(r.redeemed_at).toLocaleDateString() : ''}
                       </div>
                     </div>
-                    <div className="text-lg font-bold text-amber-600">-{r.cost} words</div>
+                    <div className="text-lg font-bold text-amber-600">-{r.cost} 🪙</div>
                   </div>
                 ))}
               </div>
@@ -175,7 +273,7 @@ export default function RewardShopPage() {
                         <p className="text-sm text-gray-500 mb-3">{item.description}</p>
                       )}
                       <div className="text-2xl font-extrabold text-amber-600 mb-4">
-                        {item.cost} words
+                        {item.cost} 🪙
                       </div>
                       <button
                         onClick={() => handleRedeem(item)}

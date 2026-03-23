@@ -303,6 +303,8 @@ class RedemptionResponse(BaseModel):
 
 class BalanceResponse(BaseModel):
     child_id: int
-    total_earned: int
-    total_spent: int
-    balance: int
+    words_available: int
+    words_per_coin: int
+    coins_balance: int
+    total_coins_earned: int
+    total_coins_spent: int

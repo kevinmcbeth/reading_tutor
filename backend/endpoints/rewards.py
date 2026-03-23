@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from auth import get_current_family
 from database import get_pool
@@ -24,10 +25,23 @@ async def _verify_child_ownership(pool, child_id: int, family_id: int):
         raise HTTPException(status_code=404, detail="Child not found")
 
 
-async def _get_balance(pool, child_id: int) -> tuple[int, int]:
-    """Return (total_earned, total_spent) for a child."""
+async def _get_word_balance(pool, child_id: int) -> tuple[int, int]:
+    """Return (total_words_earned, total_words_converted) for a child."""
     earned = await pool.fetchval(
         "SELECT COALESCE(SUM(score), 0) FROM sessions WHERE child_id = $1 AND completed_at IS NOT NULL",
+        child_id,
+    )
+    converted = await pool.fetchval(
+        "SELECT COALESCE(SUM(words_spent), 0) FROM coin_conversions WHERE child_id = $1",
+        child_id,
+    )
+    return int(earned), int(converted)
+
+
+async def _get_coin_balance(pool, child_id: int) -> tuple[int, int]:
+    """Return (total_coins_earned, total_coins_spent) for a child."""
+    earned = await pool.fetchval(
+        "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1",
         child_id,
     )
     spent = await pool.fetchval(
@@ -127,7 +141,46 @@ async def deactivate_item(
     return {"detail": "Reward item deactivated"}
 
 
-# --- Balance & Redemption (child-facing) ---
+# --- Exchange rate (parent) ---
+
+
+class ExchangeRateUpdate(BaseModel):
+    words_per_coin: int
+
+    @classmethod
+    def __get_validators__(cls):
+        yield cls.validate
+
+    @classmethod
+    def validate(cls, v):
+        return v
+
+
+@router.get("/exchange-rate")
+async def get_exchange_rate(family_id: int = Depends(get_current_family)):
+    pool = get_pool()
+    rate = await pool.fetchval(
+        "SELECT words_per_coin FROM families WHERE id = $1", family_id
+    )
+    return {"words_per_coin": rate}
+
+
+@router.put("/exchange-rate")
+async def set_exchange_rate(
+    body: ExchangeRateUpdate,
+    family_id: int = Depends(get_current_family),
+):
+    if body.words_per_coin < 1 or body.words_per_coin > 10000:
+        raise HTTPException(status_code=400, detail="Rate must be between 1 and 10,000")
+    pool = get_pool()
+    await pool.execute(
+        "UPDATE families SET words_per_coin = $1 WHERE id = $2",
+        body.words_per_coin, family_id,
+    )
+    return {"words_per_coin": body.words_per_coin}
+
+
+# --- Balance & Conversion (child-facing) ---
 
 
 @router.get("/balance/{child_id}", response_model=BalanceResponse)
@@ -137,13 +190,61 @@ async def get_balance(
 ):
     pool = get_pool()
     await _verify_child_ownership(pool, child_id, family_id)
-    earned, spent = await _get_balance(pool, child_id)
+
+    words_earned, words_converted = await _get_word_balance(pool, child_id)
+    coins_earned, coins_spent = await _get_coin_balance(pool, child_id)
+    rate = await pool.fetchval(
+        "SELECT words_per_coin FROM families WHERE id = $1", family_id
+    )
+
     return BalanceResponse(
         child_id=child_id,
-        total_earned=earned,
-        total_spent=spent,
-        balance=earned - spent,
+        words_available=words_earned - words_converted,
+        words_per_coin=rate,
+        coins_balance=coins_earned - coins_spent,
+        total_coins_earned=coins_earned,
+        total_coins_spent=coins_spent,
     )
+
+
+@router.post("/convert/{child_id}")
+async def convert_words_to_coins(
+    child_id: int,
+    coins: int = Query(..., ge=1, description="Number of coins to buy"),
+    family_id: int = Depends(get_current_family),
+):
+    pool = get_pool()
+    await _verify_child_ownership(pool, child_id, family_id)
+
+    rate = await pool.fetchval(
+        "SELECT words_per_coin FROM families WHERE id = $1", family_id
+    )
+    words_needed = coins * rate
+
+    words_earned, words_converted = await _get_word_balance(pool, child_id)
+    words_available = words_earned - words_converted
+
+    if words_available < words_needed:
+        max_coins = words_available // rate
+        raise HTTPException(
+            status_code=400,
+            detail=f"Not enough words. Need {words_needed}, have {words_available}. You can convert up to {max_coins} coins.",
+        )
+
+    await pool.execute(
+        "INSERT INTO coin_conversions (child_id, words_spent, coins_earned) VALUES ($1, $2, $3)",
+        child_id, words_needed, coins,
+    )
+
+    return {
+        "detail": f"Converted {words_needed} words into {coins} coins",
+        "words_spent": words_needed,
+        "coins_earned": coins,
+        "words_remaining": words_available - words_needed,
+    }
+
+
+# --- Redemption (child-facing) ---
 
 
 @router.post("/{item_id}/redeem")
@@ -155,7 +256,6 @@ async def redeem_item(
     pool = get_pool()
     await _verify_child_ownership(pool, child_id, family_id)
 
-    # Verify item exists, is active, and belongs to this family
     item = await pool.fetchrow(
         "SELECT * FROM reward_items WHERE id = $1 AND family_id = $2 AND active = TRUE",
         item_id, family_id,
@@ -163,16 +263,14 @@ async def redeem_item(
     if not item:
         raise HTTPException(status_code=404, detail="Reward item not found or inactive")
 
-    # Check balance
-    earned, spent = await _get_balance(pool, child_id)
-    balance = earned - spent
-    if balance < item["cost"]:
+    coins_earned, coins_spent = await _get_coin_balance(pool, child_id)
+    coin_balance = coins_earned - coins_spent
+    if coin_balance < item["cost"]:
         raise HTTPException(
             status_code=400,
-            detail=f"Not enough words. Need {item['cost']}, have {balance}.",
+            detail=f"Not enough coins. Need {item['cost']}, have {coin_balance}.",
         )
 
-    # Record redemption
     row = await pool.fetchrow(
         "INSERT INTO redemptions (child_id, item_id, cost) VALUES ($1, $2, $3) RETURNING *",
         child_id, item_id, item["cost"],
@@ -182,7 +280,7 @@ async def redeem_item(
         "redemption_id": row["id"],
         "item_name": item["name"],
         "cost": item["cost"],
-        "new_balance": balance - item["cost"],
+        "new_balance": coin_balance - item["cost"],
     }
 
 

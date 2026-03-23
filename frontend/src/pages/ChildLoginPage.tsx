@@ -221,7 +221,7 @@ export default function ChildLoginPage() {
             >
               <span className="text-2xl mr-2">🎁</span>
               <span className="text-lg font-bold">Reward Shop</span>
-              <span className="text-sm text-white/80 ml-2">Spend your words!</span>
+              <span className="text-sm text-white/80 ml-2">Spend your coins!</span>
             </button>
 
             <button
