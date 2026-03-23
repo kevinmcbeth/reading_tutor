@@ -67,9 +67,14 @@ export interface AnalyticsResponse {
   commonly_missed_words: { word: string; count: number }[];
 }
 
+export interface TranscriptionHypothesis {
+  text: string;
+  probability: number;
+}
+
 export interface SpeechRecognitionResponse {
   transcript: string;
-  alternatives: string[];
+  alternatives: TranscriptionHypothesis[];
   confidence: number;
 }
 

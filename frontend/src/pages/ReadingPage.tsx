@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { fetchStory, createSession, completeSession, StoryResponse, WordResult } from '../services/api';
+import { fetchStory, createSession, completeSession, StoryResponse, WordResult, TranscriptionHypothesis } from '../services/api';
 import { getAccessToken } from '../services/auth';
 import { useAuth } from '../context/AuthContext';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
@@ -56,6 +56,27 @@ function matchTranscriptToWords(transcript: string, words: BackendWord[]): Map<n
   }
 
   return results;
+}
+
+/**
+ * Check N-best hypotheses with >= 10% probability for a match.
+ * If any plausible hypothesis contains the target word, count it as correct.
+ */
+function matchNBestToWords(
+  alternatives: TranscriptionHypothesis[],
+  words: BackendWord[],
+): Map<number, WordState> {
+  const plausible = alternatives.filter(h => h.probability >= 0.10);
+  // Run matching on each plausible hypothesis independently
+  const perHypothesis = plausible.map(h => matchTranscriptToWords(h.text, words));
+
+  // Merge: a word is correct if ANY hypothesis marked it correct
+  const merged = new Map<number, WordState>();
+  for (const word of words) {
+    const isCorrectInAny = perHypothesis.some(m => m.get(word.id) === 'correct');
+    merged.set(word.id, isCorrectInAny ? 'correct' : 'missed');
+  }
+  return merged;
 }
 
 export default function ReadingPage() {
@@ -158,11 +179,9 @@ export default function ReadingPage() {
     if (!speech.transcript || speech.isListening || speech.isProcessing) return;
     if (!currentSentence || sentenceComplete) return;
 
-    const transcript = speech.alternatives.length > 0
-      ? speech.alternatives.join(' ')
-      : speech.transcript;
-
-    const matches = matchTranscriptToWords(transcript, currentSentence.words);
+    const matches = speech.alternatives.length > 0
+      ? matchNBestToWords(speech.alternatives, currentSentence.words)
+      : matchTranscriptToWords(speech.transcript, currentSentence.words);
     const newScores = new Map(wordScores);
 
     matches.forEach((state, wordId) => {

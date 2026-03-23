@@ -1,7 +1,10 @@
 import asyncio
 import logging
+import math
 import tempfile
 from pathlib import Path
+
+import numpy as np
 
 from config import settings
 
@@ -9,6 +12,9 @@ logger = logging.getLogger(__name__)
 
 try:
     from faster_whisper import WhisperModel
+    from faster_whisper.audio import decode_audio, pad_or_trim
+    from faster_whisper.tokenizer import Tokenizer
+    from faster_whisper.transcribe import get_ctranslate2_storage
 
     _WHISPER_AVAILABLE = True
 except ImportError:
@@ -20,6 +26,9 @@ except ImportError:
 
 _model: "WhisperModel | None" = None
 _semaphore = asyncio.Semaphore(1)
+
+N_BEST = 5
+SAMPLING_TEMPERATURE = 0.4
 
 
 def _get_model() -> "WhisperModel":
@@ -45,8 +54,19 @@ def _get_model() -> "WhisperModel":
     return _model
 
 
+def _softmax(scores: list[float]) -> list[float]:
+    """Convert log-prob scores to normalized probabilities."""
+    max_s = max(scores)
+    exps = [math.exp(s - max_s) for s in scores]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+
 def transcribe(audio_bytes: bytes, target_word: str | None = None) -> dict:
-    """Transcribe audio bytes and return transcript with alternatives.
+    """Transcribe audio bytes and return N-best hypotheses with probabilities.
+
+    Uses the CTranslate2 model directly to generate multiple hypotheses
+    via sampling, giving benefit of the doubt for similar-sounding words.
 
     Args:
         audio_bytes: Raw audio data (WebM, WAV, etc.)
@@ -54,56 +74,97 @@ def transcribe(audio_bytes: bytes, target_word: str | None = None) -> dict:
 
     Returns:
         dict with keys: transcript, alternatives, confidence
+        - alternatives is a list of {"text": str, "probability": float}
+          sorted by probability descending
     """
     model = _get_model()
 
-    # Write audio to a temp file since faster-whisper needs a file path
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp_path = Path(tmp.name)
     try:
         tmp.write(audio_bytes)
         tmp.close()
 
-        kwargs: dict = {
-            "language": "en",
-            "beam_size": 5,
-            "best_of": 3,
-            "temperature": [0.0, 0.2, 0.4],
-            "word_timestamps": False,
-            "vad_filter": True,
-        }
+        # Decode audio and extract mel features
+        audio = decode_audio(str(tmp_path), sampling_rate=16000)
+        features = model.feature_extractor(audio)
+        features = pad_or_trim(features)
+        features = get_ctranslate2_storage(np.expand_dims(features, 0))
+
+        # Encode audio features
+        encoder_output = model.model.encode(features)
+
+        # Build tokenizer and prompt
+        tokenizer = Tokenizer(
+            model.hf_tokenizer,
+            model.model.is_multilingual,
+            task="transcribe",
+            language="en",
+        )
+
+        initial_prompt = None
         if target_word:
-            kwargs["initial_prompt"] = (
-                f"The child is reading the word: {target_word}"
-            )
+            initial_prompt = f"The child is reading the word: {target_word}"
 
-        segments, info = model.transcribe(str(tmp_path), **kwargs)
+        prompt = model.get_prompt(
+            tokenizer,
+            previous_tokens=[],
+            without_timestamps=True,
+            prefix=initial_prompt,
+        )
 
-        # Collect all segment texts
-        texts: list[str] = []
-        for segment in segments:
-            text = segment.text.strip()
-            if text:
-                texts.append(text)
+        # Generate N-best hypotheses via sampling
+        results = model.model.generate(
+            encoder_output,
+            [prompt],
+            beam_size=1,
+            num_hypotheses=N_BEST,
+            sampling_topk=0,
+            sampling_temperature=SAMPLING_TEMPERATURE,
+            return_scores=True,
+            return_no_speech_prob=True,
+            max_length=448,
+            suppress_blank=True,
+        )
 
-        transcript = " ".join(texts).strip() if texts else ""
+        result = results[0]
 
-        # Build alternatives from individual segments (deduplicated, preserving order)
+        # Decode each hypothesis and collect scores
+        hypotheses: list[dict] = []
         seen: set[str] = set()
-        alternatives: list[str] = []
-        for t in texts:
-            low = t.lower()
-            if low not in seen:
-                seen.add(low)
-                alternatives.append(t)
+        for i in range(len(result.sequences_ids)):
+            tokens = result.sequences_ids[i]
+            score = result.scores[i]
+            text = tokenizer.decode(tokens).strip()
+            if not text:
+                continue
+            low = text.lower()
+            if low in seen:
+                continue
+            seen.add(low)
+            hypotheses.append({"text": text, "score": score})
 
-        # Use the language probability as a confidence proxy
-        confidence = round(info.language_probability, 4) if info else 0.0
+        if not hypotheses:
+            return {
+                "transcript": "",
+                "alternatives": [],
+                "confidence": 0.0,
+            }
+
+        # Convert log-prob scores to probabilities
+        probs = _softmax([h["score"] for h in hypotheses])
+        alternatives = [
+            {"text": h["text"], "probability": round(p, 4)}
+            for h, p in zip(hypotheses, probs)
+        ]
+        alternatives.sort(key=lambda x: x["probability"], reverse=True)
+
+        best = alternatives[0]
 
         return {
-            "transcript": transcript,
+            "transcript": best["text"],
             "alternatives": alternatives,
-            "confidence": confidence,
+            "confidence": best["probability"],
         }
     finally:
         tmp_path.unlink(missing_ok=True)

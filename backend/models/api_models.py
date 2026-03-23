@@ -206,9 +206,14 @@ MAX_PAGE_LIMIT = 200
 
 # --- Speech recognition ---
 
+class TranscriptionHypothesis(BaseModel):
+    text: str
+    probability: float
+
+
 class SpeechRecognitionResponse(BaseModel):
     transcript: str
-    alternatives: list[str]
+    alternatives: list[TranscriptionHypothesis]
     confidence: float
 
 

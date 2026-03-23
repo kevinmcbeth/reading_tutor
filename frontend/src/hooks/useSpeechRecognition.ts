@@ -1,10 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { getAccessToken } from '../services/auth';
+import type { TranscriptionHypothesis } from '../services/api';
 
 interface UseSpeechRecognitionReturn {
   isListening: boolean;
   transcript: string;
-  alternatives: string[];
+  alternatives: TranscriptionHypothesis[];
   confidence: number;
   startListening: (targetWord?: string) => void;
   stopListening: () => void;
@@ -17,7 +18,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
-  const [alternatives, setAlternatives] = useState<string[]>([]);
+  const [alternatives, setAlternatives] = useState<TranscriptionHypothesis[]>([]);
   const [confidence, setConfidence] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);

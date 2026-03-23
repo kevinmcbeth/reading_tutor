@@ -10,6 +10,10 @@ async def transcribe_async(
     transcript = target_word or "hello"
     return {
         "transcript": transcript,
-        "alternatives": [transcript],
-        "confidence": 0.95,
+        "alternatives": [
+            {"text": transcript, "probability": 0.85},
+            {"text": "help", "probability": 0.10},
+            {"text": "held", "probability": 0.05},
+        ],
+        "confidence": 0.85,
     }
