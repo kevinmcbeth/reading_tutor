@@ -253,3 +253,56 @@ class FPStoryPrompt(BaseModel):
     topic: str
     level: str
     theme: Optional[str] = None
+
+
+# --- Rewards / Ticket Redeem ---
+
+class RewardItemCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    emoji: str = "\U0001f381"
+    cost: int
+
+    @field_validator("cost")
+    @classmethod
+    def validate_cost(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Cost must be at least 1")
+        if v > 1_000_000:
+            raise ValueError("Cost cannot exceed 1,000,000")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("Name must be between 1 and 100 characters")
+        return v
+
+
+class RewardItemResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    emoji: str
+    cost: int
+    active: bool
+    created_at: Optional[str]
+
+
+class RedemptionResponse(BaseModel):
+    id: int
+    child_id: int
+    item_id: int
+    item_name: str
+    item_emoji: str
+    cost: int
+    redeemed_at: Optional[str]
+
+
+class BalanceResponse(BaseModel):
+    child_id: int
+    total_earned: int
+    total_spent: int
+    balance: int

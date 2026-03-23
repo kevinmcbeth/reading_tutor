@@ -136,6 +136,28 @@ CREATE INDEX IF NOT EXISTS idx_generation_logs_job_id ON generation_logs(job_id)
 CREATE INDEX IF NOT EXISTS idx_fp_progress_child_level ON fp_progress(child_id, fp_level);
 CREATE INDEX IF NOT EXISTS idx_stories_fp_level ON stories(fp_level);
 
+CREATE TABLE IF NOT EXISTS reward_items (
+    id SERIAL PRIMARY KEY,
+    family_id INTEGER REFERENCES families(id) NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    emoji TEXT DEFAULT '🎁',
+    cost INTEGER NOT NULL CHECK (cost > 0),
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS redemptions (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    item_id INTEGER REFERENCES reward_items(id) NOT NULL,
+    cost INTEGER NOT NULL,
+    redeemed_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_reward_items_family ON reward_items(family_id);
+CREATE INDEX IF NOT EXISTS idx_redemptions_child ON redemptions(child_id);
+
 -- Analytics & scaling indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_child_completed ON sessions(child_id, completed_at) WHERE completed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_session_words_correct ON session_words(word_id, correct);
@@ -161,20 +183,20 @@ FP_LEVEL_DATA = [
     ("L", 12, "3", 6, 8, True, "sparse", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Fluent reader — literary language, sparse images"),
     ("M", 13, "3", 8, 10, True, "rare", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Independent reader — rare image support"),
     ("N", 14, "3-4", 8, 10, True, "rare", {"type": "varied", "allow_compound": True, "allow_literary": True}, "Independent reader — rare image support"),
-    ("O", 15, "4", 10, 12, False, "none", {"type": "grade_appropriate"}, "Advanced reader — no images, grade-appropriate vocabulary"),
-    ("P", 16, "4", 10, 12, False, "none", {"type": "grade_appropriate"}, "Advanced reader — no images"),
-    ("Q", 17, "4-5", 12, 15, False, "none", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
-    ("R", 18, "5", 12, 15, False, "none", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
-    ("S", 19, "5", 15, 18, False, "none", {"type": "grade_appropriate"}, "Proficient reader"),
-    ("T", 20, "5-6", 15, 18, False, "none", {"type": "grade_appropriate"}, "Proficient reader"),
-    ("U", 21, "6", 18, 22, False, "none", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
-    ("V", 22, "6-7", 18, 22, False, "none", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
-    ("W", 23, "7", 20, 25, False, "none", {"type": "grade_appropriate"}, "Expert reader"),
-    ("X", 24, "7-8", 20, 25, False, "none", {"type": "grade_appropriate"}, "Expert reader"),
-    ("Y", 25, "8", 25, 30, False, "none", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
-    ("Z", 26, "8+", 25, 30, False, "none", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
-    ("Z1", 27, "9+", 30, 40, False, "none", {"type": "grade_appropriate"}, "Advanced expert"),
-    ("Z2", 28, "10+", 30, 40, False, "none", {"type": "grade_appropriate"}, "Advanced expert"),
+    ("O", 15, "4", 10, 12, True, "rare", {"type": "grade_appropriate"}, "Advanced reader — grade-appropriate vocabulary"),
+    ("P", 16, "4", 10, 12, True, "rare", {"type": "grade_appropriate"}, "Advanced reader"),
+    ("Q", 17, "4-5", 12, 15, True, "rare", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
+    ("R", 18, "5", 12, 15, True, "rare", {"type": "grade_appropriate"}, "Advanced reader — longer texts"),
+    ("S", 19, "5", 15, 18, True, "rare", {"type": "grade_appropriate"}, "Proficient reader"),
+    ("T", 20, "5-6", 15, 18, True, "rare", {"type": "grade_appropriate"}, "Proficient reader"),
+    ("U", 21, "6", 18, 22, True, "rare", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
+    ("V", 22, "6-7", 18, 22, True, "rare", {"type": "grade_appropriate"}, "Proficient reader — sophisticated content"),
+    ("W", 23, "7", 20, 25, True, "rare", {"type": "grade_appropriate"}, "Expert reader"),
+    ("X", 24, "7-8", 20, 25, True, "rare", {"type": "grade_appropriate"}, "Expert reader"),
+    ("Y", 25, "8", 25, 30, True, "rare", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
+    ("Z", 26, "8+", 25, 30, True, "rare", {"type": "grade_appropriate"}, "Expert reader — complex themes"),
+    ("Z1", 27, "9+", 30, 40, True, "rare", {"type": "grade_appropriate"}, "Advanced expert"),
+    ("Z2", 28, "10+", 30, 40, True, "rare", {"type": "grade_appropriate"}, "Advanced expert"),
 ]
 
 

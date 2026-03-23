@@ -308,3 +308,76 @@ export async function generateFPStory(topic: string, level: string, theme?: stri
     body: JSON.stringify({ topic, level, theme: theme || null }),
   });
 }
+
+// --- Rewards / Ticket Redeem ---
+
+export interface RewardItemResponse {
+  id: number;
+  name: string;
+  description: string | null;
+  emoji: string;
+  cost: number;
+  active: boolean;
+  created_at: string | null;
+}
+
+export interface RedemptionResponse {
+  id: number;
+  child_id: number;
+  item_id: number;
+  item_name: string;
+  item_emoji: string;
+  cost: number;
+  redeemed_at: string | null;
+}
+
+export interface BalanceResponse {
+  child_id: number;
+  total_earned: number;
+  total_spent: number;
+  balance: number;
+}
+
+export interface RedeemResult {
+  detail: string;
+  redemption_id: number;
+  item_name: string;
+  cost: number;
+  new_balance: number;
+}
+
+export async function fetchRewardItems(activeOnly: boolean = true): Promise<RewardItemResponse[]> {
+  return fetchJson<RewardItemResponse[]>(`/rewards/items?active_only=${activeOnly}`);
+}
+
+export async function createRewardItem(name: string, cost: number, emoji?: string, description?: string): Promise<RewardItemResponse> {
+  return fetchJson<RewardItemResponse>('/rewards/items', {
+    method: 'POST',
+    body: JSON.stringify({ name, cost, emoji: emoji || '🎁', description: description || null }),
+  });
+}
+
+export async function updateRewardItem(id: number, name: string, cost: number, emoji?: string, description?: string): Promise<RewardItemResponse> {
+  return fetchJson<RewardItemResponse>(`/rewards/items/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, cost, emoji: emoji || '🎁', description: description || null }),
+  });
+}
+
+export async function deleteRewardItem(id: number): Promise<void> {
+  await fetchJson(`/rewards/items/${id}`, { method: 'DELETE' });
+}
+
+export async function fetchBalance(childId: string): Promise<BalanceResponse> {
+  return fetchJson<BalanceResponse>(`/rewards/balance/${childId}`);
+}
+
+export async function redeemItem(itemId: number, childId: string): Promise<RedeemResult> {
+  return fetchJson<RedeemResult>(`/rewards/${itemId}/redeem?child_id=${childId}`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchRedemptionHistory(childId: string): Promise<RedemptionResponse[]> {
+  return fetchJson<RedemptionResponse[]>(`/rewards/history/${childId}`);
+}
