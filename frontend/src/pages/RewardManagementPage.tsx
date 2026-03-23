@@ -32,6 +32,7 @@ export default function RewardManagementPage() {
   const [formCost, setFormCost] = useState('');
   const [formEmoji, setFormEmoji] = useState('🎁');
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const [expandedChild, setExpandedChild] = useState<string | null>(null);
 
@@ -72,6 +73,7 @@ export default function RewardManagementPage() {
     setFormDescription('');
     setFormCost('');
     setFormEmoji('🎁');
+    setFormError(null);
   };
 
   const handleEdit = (item: RewardItemResponse) => {
@@ -87,6 +89,7 @@ export default function RewardManagementPage() {
     const cost = parseInt(formCost);
     if (!formName.trim() || isNaN(cost) || cost < 1) return;
     setSaving(true);
+    setFormError(null);
     try {
       if (editingId) {
         const updated = await updateRewardItem(editingId, formName.trim(), cost, formEmoji, formDescription.trim() || undefined);
@@ -97,6 +100,8 @@ export default function RewardManagementPage() {
       }
       resetForm();
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save reward';
+      setFormError(message);
       console.error('Failed to save reward:', err);
     } finally {
       setSaving(false);
@@ -312,6 +317,12 @@ export default function RewardManagementPage() {
                 </div>
               </div>
             </div>
+
+            {formError && (
+              <div className="mt-4 bg-red-100 text-red-700 rounded-xl p-3 text-sm text-center">
+                {formError}
+              </div>
+            )}
 
             <div className="flex gap-3 mt-6">
               <button
