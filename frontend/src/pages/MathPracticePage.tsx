@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { useMathSession } from '../hooks/useMathSession';
 import ProblemDisplay from '../components/math/ProblemDisplay';
 import AnswerInput from '../components/math/AnswerInput';
@@ -18,6 +19,7 @@ export default function MathPracticePage() {
   const { subject } = useParams<{ subject: string }>();
   const navigate = useNavigate();
   const { selectedChild } = useAuth();
+  const speech = useSpeechRecognition();
   const math = useMathSession();
 
   const [phase, setPhase] = useState<'loading' | 'problem' | 'complete'>('loading');
@@ -62,6 +64,14 @@ export default function MathPracticePage() {
       submittingRef.current = false;
     });
   }, [math, waitingForNext]);
+
+  const handleMicPress = useCallback(() => {
+    if (speech.isListening) {
+      speech.stopListening();
+    } else if (!waitingForNext) {
+      speech.startListening();
+    }
+  }, [speech, waitingForNext]);
 
   const handleComplete = useCallback(async () => {
     setCompleting(true);
@@ -150,6 +160,10 @@ export default function MathPracticePage() {
               onSubmit={handleSubmitAnswer}
               lastResult={math.lastResult}
               disabled={waitingForNext}
+              transcript={speech.transcript}
+              isListening={speech.isListening}
+              isProcessing={speech.isProcessing}
+              onMicPress={handleMicPress}
             />
           </>
         )}

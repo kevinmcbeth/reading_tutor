@@ -1,20 +1,47 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import MicButton from '../MicButton';
 
 interface AnswerInputProps {
   onSubmit: (answer: string) => void;
   lastResult: { correct: boolean; correct_answer: string; child_answer: string } | null;
   disabled?: boolean;
+  // Speech recognition props (optional — mic hidden if not provided)
+  transcript?: string;
+  isListening?: boolean;
+  isProcessing?: boolean;
+  onMicPress?: () => void;
 }
 
 const BUTTON_BASE = 'text-3xl font-bold rounded-2xl shadow transition-all duration-150 active:scale-95 select-none';
 
-export default function AnswerInput({ onSubmit, lastResult, disabled }: AnswerInputProps) {
+/** Extract the first number from a speech transcript. */
+function extractNumber(text: string): string | null {
+  // Try raw digits first
+  const digitMatch = text.match(/\d+/);
+  if (digitMatch) return digitMatch[0];
+  return null;
+}
+
+export default function AnswerInput({
+  onSubmit, lastResult, disabled,
+  transcript, isListening, isProcessing, onMicPress,
+}: AnswerInputProps) {
   const [value, setValue] = useState('');
+  const hasMic = !!onMicPress;
+
+  // When a transcript arrives from speech, fill the numpad value
+  useEffect(() => {
+    if (!transcript) return;
+    const num = extractNumber(transcript);
+    if (num) {
+      setValue(num);
+    }
+  }, [transcript]);
 
   const handleDigit = useCallback((digit: string) => {
     if (disabled) return;
     setValue(prev => {
-      if (prev.length >= 5) return prev; // max 5 digits (up to 99999)
+      if (prev.length >= 5) return prev;
       return prev + digit;
     });
   }, [disabled]);
@@ -34,7 +61,9 @@ export default function AnswerInput({ onSubmit, lastResult, disabled }: AnswerIn
     <div className="flex flex-col items-center gap-3 w-full max-w-xs mx-auto">
       {/* Answer display */}
       <div className="w-full bg-white rounded-2xl shadow-lg px-4 py-3 min-h-[3.5rem] flex items-center justify-center">
-        {value ? (
+        {isProcessing ? (
+          <span className="text-xl text-gray-400 animate-pulse">Listening...</span>
+        ) : value ? (
           <span className="text-4xl font-bold text-gray-800 tracking-widest">{value}</span>
         ) : lastResult ? (
           <span className={`text-2xl font-bold ${lastResult.correct ? 'text-green-500' : 'text-red-500'}`}>
@@ -81,6 +110,18 @@ export default function AnswerInput({ onSubmit, lastResult, disabled }: AnswerIn
           ✓
         </button>
       </div>
+
+      {/* Mic button — speak to fill the numpad */}
+      {hasMic && (
+        <div className="mt-2 flex flex-col items-center gap-1">
+          <MicButton
+            onPress={onMicPress!}
+            isListening={!!isListening}
+            disabled={disabled || isProcessing}
+          />
+          <span className="text-xs text-white/60">or say your answer</span>
+        </div>
+      )}
     </div>
   );
 }
