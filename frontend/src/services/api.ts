@@ -384,6 +384,19 @@ export async function fetchRedemptionHistory(childId: string): Promise<Redemptio
   return fetchJson<RedemptionResponse[]>(`/rewards/history/${childId}`);
 }
 
+export interface WalletItem {
+  item_id: number;
+  item_name: string;
+  item_emoji: string;
+  item_description: string | null;
+  quantity: number;
+  last_redeemed: string | null;
+}
+
+export async function fetchWallet(childId: string): Promise<WalletItem[]> {
+  return fetchJson<WalletItem[]>(`/rewards/wallet/${childId}`);
+}
+
 export interface ConvertResult {
   detail: string;
   words_spent: number;

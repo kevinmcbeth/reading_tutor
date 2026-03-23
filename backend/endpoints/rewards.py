@@ -9,6 +9,7 @@ from models.api_models import (
     RedemptionResponse,
     RewardItemCreate,
     RewardItemResponse,
+    WalletItemResponse,
     DEFAULT_PAGE_LIMIT,
     MAX_PAGE_LIMIT,
 )
@@ -348,6 +349,36 @@ async def redemption_history(
             item_name=r["item_name"], item_emoji=r["item_emoji"],
             cost=r["cost"],
             redeemed_at=str(r["redeemed_at"]) if r["redeemed_at"] else None,
+        )
+        for r in rows
+    ]
+
+
+@router.get("/wallet/{child_id}", response_model=list[WalletItemResponse])
+async def get_wallet(
+    child_id: int,
+    family_id: int = Depends(get_current_family),
+):
+    """Get a child's collected rewards grouped by item (trophy case / inventory)."""
+    pool = get_pool()
+    await _verify_child_ownership(pool, child_id, family_id)
+    rows = await pool.fetch(
+        """SELECT ri.id AS item_id, ri.name AS item_name, ri.emoji AS item_emoji,
+                  ri.description AS item_description,
+                  COUNT(*) AS quantity, MAX(r.redeemed_at) AS last_redeemed
+           FROM redemptions r
+           JOIN reward_items ri ON ri.id = r.item_id
+           WHERE r.child_id = $1
+           GROUP BY ri.id, ri.name, ri.emoji, ri.description
+           ORDER BY COUNT(*) DESC, MAX(r.redeemed_at) DESC""",
+        child_id,
+    )
+    return [
+        WalletItemResponse(
+            item_id=r["item_id"], item_name=r["item_name"],
+            item_emoji=r["item_emoji"], item_description=r["item_description"],
+            quantity=r["quantity"],
+            last_redeemed=str(r["last_redeemed"]) if r["last_redeemed"] else None,
         )
         for r in rows
     ]
