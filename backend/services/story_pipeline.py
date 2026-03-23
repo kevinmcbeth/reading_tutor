@@ -157,6 +157,49 @@ def _is_challenge_word(
         return True
 
 
+def _normalize_image_prompts(raw: any, num_sentences: int) -> list[dict]:
+    """Normalize LLM image prompt responses into a consistent list of dicts.
+
+    Handles: dict wrapping, list of dicts, list of lists, list of strings,
+    and assigns sentence_index when missing.
+    """
+    if isinstance(raw, dict):
+        if "prompts" in raw:
+            raw = raw["prompts"]
+        elif "image_prompt" in raw:
+            raw = [raw]
+        else:
+            raw = list(raw.values()) if raw else []
+
+    if not isinstance(raw, list):
+        return []
+
+    normalized = []
+    for i, item in enumerate(raw):
+        if isinstance(item, dict):
+            # Ensure sentence_index is present
+            if "sentence_index" not in item:
+                item["sentence_index"] = i
+            normalized.append(item)
+        elif isinstance(item, str):
+            # Bare string — treat as image_prompt
+            normalized.append({
+                "sentence_index": i,
+                "image_prompt": item,
+                "negative_prompt": "",
+            })
+        elif isinstance(item, list):
+            # List of [prompt, negative_prompt] or just [prompt]
+            normalized.append({
+                "sentence_index": i,
+                "image_prompt": item[0] if len(item) > 0 else "",
+                "negative_prompt": item[1] if len(item) > 1 else "",
+            })
+        # Skip anything else
+
+    return normalized
+
+
 def _is_local_mode() -> bool:
     """Check if we're running all services locally (single machine)."""
     return (
@@ -261,10 +304,9 @@ async def run_story_generation(
             )
             image_prompts = []
 
-        # Update sentence records with image prompts
+        # Normalize and update sentence records with image prompts
+        image_prompts = _normalize_image_prompts(image_prompts, len(sentence_records))
         for ip in image_prompts:
-            if isinstance(ip, str):
-                continue
             s_idx = ip.get("sentence_index", 0)
             if s_idx < len(sentence_records):
                 sid = sentence_records[s_idx]["id"]
@@ -660,18 +702,10 @@ async def run_fp_story_generation(
                 image_prompts = []
 
             # Normalize LLM response
-            if isinstance(image_prompts, dict):
-                if "prompts" in image_prompts:
-                    image_prompts = image_prompts["prompts"]
-                elif "image_prompt" in image_prompts:
-                    image_prompts = [image_prompts]
-                else:
-                    image_prompts = list(image_prompts.values()) if image_prompts else []
+            image_prompts = _normalize_image_prompts(image_prompts, len(sentence_records))
 
             # Save prompts to DB
             for ip in image_prompts:
-                if isinstance(ip, str):
-                    continue
                 s_idx = ip.get("sentence_index", 0)
                 if s_idx < len(sentence_records):
                     sid = sentence_records[s_idx]["id"]
