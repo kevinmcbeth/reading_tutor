@@ -447,6 +447,8 @@ export interface StockInfoResponse {
   description: string | null;
   current_price: number;
   change_pct: number;
+  type: string;
+  dividend_yield: number;
 }
 
 export interface StockPricePointResponse {
@@ -534,6 +536,7 @@ export async function depositStockCoins(childId: string, coins: number): Promise
 export async function createStock(data: {
   symbol: string; name: string; emoji: string; category: string;
   description?: string; base_price: number; volatility: number;
+  type?: string; dividend_yield?: number;
 }): Promise<StockInfoResponse> {
   return fetchJson<StockInfoResponse>('/stockmarket/admin/stocks', {
     method: 'POST',
@@ -544,6 +547,7 @@ export async function createStock(data: {
 export async function updateStock(stockId: number, data: {
   symbol: string; name: string; emoji: string; category: string;
   description?: string; base_price: number; volatility: number;
+  type?: string; dividend_yield?: number;
 }): Promise<StockInfoResponse> {
   return fetchJson<StockInfoResponse>(`/stockmarket/admin/stocks/${stockId}`, {
     method: 'PUT',

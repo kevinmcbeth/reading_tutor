@@ -144,7 +144,7 @@ export default function StockMarketPage() {
                 : 'bg-white/30 text-white hover:bg-white/50'
             }`}
           >
-            {t === 'market' ? 'Stocks' : t === 'news' ? 'News' : 'My Stuff'}
+            {t === 'market' ? 'Market' : t === 'news' ? 'News' : 'My Stuff'}
           </button>
         ))}
       </div>
@@ -161,8 +161,20 @@ export default function StockMarketPage() {
               >
                 <span className="text-3xl">{stock.emoji}</span>
                 <div className="flex-1 text-left">
-                  <div className="font-bold text-gray-800">{stock.name}</div>
-                  <div className="text-xs text-gray-400">{stock.symbol}</div>
+                  <div className="font-bold text-gray-800">
+                    {stock.name}
+                    {stock.type === 'bond' && (
+                      <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">BOND</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    {stock.symbol}
+                    {stock.dividend_yield > 0 && (
+                      <span className="ml-1 text-green-600 font-medium">
+                        {(stock.dividend_yield * 100).toFixed(1)}% yield
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="text-right">
                   <div className="font-extrabold text-gray-800">{stock.current_price.toFixed(2)}</div>
@@ -276,8 +288,20 @@ export default function StockMarketPage() {
                 >
                   <span className="text-3xl">{h.emoji}</span>
                   <div className="flex-1 text-left">
-                    <div className="font-bold text-gray-800">{h.name}</div>
-                    <div className="text-xs text-gray-400">{h.shares} shares</div>
+                    <div className="font-bold text-gray-800">
+                      {h.name}
+                      {h.type === 'bond' && (
+                        <span className="ml-1.5 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-bold">BOND</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {h.shares} shares
+                      {h.dividend_yield > 0 && (
+                        <span className="ml-1 text-green-600 font-medium">
+                          {(h.dividend_yield * 100).toFixed(1)}% yield
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className="text-right">
                     <div className="font-extrabold text-emerald-600">{h.value.toFixed(0)}</div>

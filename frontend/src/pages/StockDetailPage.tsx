@@ -139,7 +139,12 @@ export default function StockDetailPage() {
       <div className="mt-12 mb-4 text-center">
         <div className="text-6xl mb-2">{stock.emoji}</div>
         <h1 className="text-3xl font-extrabold text-white drop-shadow-lg">{stock.name}</h1>
-        <div className="text-white/70 text-sm">{stock.symbol} &middot; {stock.category}</div>
+        <div className="text-white/70 text-sm">
+          {stock.symbol} &middot; {stock.category}
+          {stock.type === 'bond' && (
+            <span className="ml-1.5 bg-blue-200/80 text-blue-800 px-2 py-0.5 rounded-full text-xs font-bold">BOND</span>
+          )}
+        </div>
       </div>
 
       {/* Price */}
@@ -161,6 +166,21 @@ export default function StockDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Yield info */}
+      {stock.dividend_yield > 0 && (
+        <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-4 w-full max-w-md mb-4">
+          <div className="text-xs uppercase tracking-wide text-green-600 font-bold mb-1">
+            {stock.type === 'bond' ? 'Coupon Rate' : 'Dividend Yield'}
+          </div>
+          <div className="text-2xl font-extrabold text-green-700">
+            {(stock.dividend_yield * 100).toFixed(1)}% per year
+          </div>
+          <div className="text-sm text-gray-500 mt-1">
+            Earns coins daily while you hold {stock.type === 'bond' ? 'bonds' : 'shares'}
+          </div>
+        </div>
+      )}
 
       {/* News story */}
       {story && (

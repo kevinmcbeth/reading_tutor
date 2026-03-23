@@ -9,7 +9,7 @@ import {
 } from '../services/api';
 
 const EMOJI_OPTIONS = ['📊', '🦄', '🍌', '🦕', '🧪', '🤖', '🍕', '🌈', '🧦', '🏰', '🫧', '🚛', '🫘', '🐉', '🌋', '💨', '🧊', '🪄', '☁️', '💩', '🐱', '🎮', '🧸', '🎪', '🚀', '👽', '🎩', '🦑', '🍩', '🔮'];
-const CATEGORY_OPTIONS = ['food', 'toys', 'pets', 'transport', 'space', 'fashion', 'services', 'construction', 'magical', 'weather', 'collectibles', 'awards', 'education', 'furniture', 'other'];
+const CATEGORY_OPTIONS = ['food', 'toys', 'pets', 'transport', 'space', 'fashion', 'services', 'construction', 'magical', 'weather', 'collectibles', 'awards', 'education', 'furniture', 'bonds', 'other'];
 
 export default function StockManagementPage() {
   const navigate = useNavigate();
@@ -26,6 +26,8 @@ export default function StockManagementPage() {
   const [formDescription, setFormDescription] = useState('');
   const [formPrice, setFormPrice] = useState('100');
   const [formVolatility, setFormVolatility] = useState('0.15');
+  const [formType, setFormType] = useState<'stock' | 'bond'>('stock');
+  const [formDividendYield, setFormDividendYield] = useState('0');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
@@ -46,6 +48,8 @@ export default function StockManagementPage() {
     setFormDescription('');
     setFormPrice('100');
     setFormVolatility('0.15');
+    setFormType('stock');
+    setFormDividendYield('0');
     setFormError(null);
   };
 
@@ -58,6 +62,8 @@ export default function StockManagementPage() {
     setFormDescription(stock.description || '');
     setFormPrice(String(stock.current_price));
     setFormVolatility('0.15');
+    setFormType((stock.type || 'stock') as 'stock' | 'bond');
+    setFormDividendYield(String((stock.dividend_yield || 0) * 100));
     setFormError(null);
     setShowForm(true);
   };
@@ -78,6 +84,8 @@ export default function StockManagementPage() {
         description: formDescription.trim() || undefined,
         base_price: parseFloat(formPrice) || 100,
         volatility: parseFloat(formVolatility) || 0.15,
+        type: formType,
+        dividend_yield: (parseFloat(formDividendYield) || 0) / 100,
       };
 
       if (editingId) {
@@ -126,7 +134,7 @@ export default function StockManagementPage() {
           >
             &larr; Back
           </button>
-          <h1 className="text-2xl font-bold text-gray-800">Manage Stocks</h1>
+          <h1 className="text-2xl font-bold text-gray-800">Manage Stocks & Bonds</h1>
           <button
             onClick={() => { resetForm(); setShowForm(true); }}
             className="px-4 py-2 bg-green-500 text-white rounded-full hover:bg-green-600 transition font-medium"
@@ -141,8 +149,20 @@ export default function StockManagementPage() {
             <div key={stock.id} className="bg-white rounded-xl shadow p-4 flex items-center gap-3">
               <span className="text-3xl">{stock.emoji}</span>
               <div className="flex-1">
-                <div className="font-bold text-gray-800">{stock.name}</div>
-                <div className="text-xs text-gray-400">{stock.symbol} &middot; {stock.category} &middot; {stock.current_price.toFixed(2)} coins</div>
+                <div className="font-bold text-gray-800">
+                  {stock.name}
+                  {stock.type === 'bond' && (
+                    <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">BOND</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-400">
+                  {stock.symbol} &middot; {stock.category} &middot; {stock.current_price.toFixed(2)} coins
+                  {stock.dividend_yield > 0 && (
+                    <span className="ml-1 text-green-600 font-medium">
+                      &middot; {(stock.dividend_yield * 100).toFixed(1)}% yield
+                    </span>
+                  )}
+                </div>
                 {stock.description && (
                   <div className="text-xs text-gray-400 mt-0.5">{stock.description}</div>
                 )}
@@ -261,6 +281,46 @@ export default function StockManagementPage() {
                     placeholder="What does this silly company do?"
                     className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-blue-400"
                   />
+                </div>
+
+                {/* Type */}
+                <div>
+                  <label className="text-sm font-medium text-gray-600">Type</label>
+                  <div className="flex gap-2 mt-1">
+                    {(['stock', 'bond'] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setFormType(t)}
+                        className={`flex-1 py-2 rounded-lg font-medium text-sm transition ${
+                          formType === t
+                            ? t === 'bond'
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-green-500 text-white'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                      >
+                        {t === 'stock' ? '📊 Stock' : '📜 Bond'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Dividend Yield */}
+                <div>
+                  <label className="text-sm font-medium text-gray-600">
+                    {formType === 'bond' ? 'Coupon Rate' : 'Dividend Yield'} (% per year)
+                  </label>
+                  <input
+                    type="number"
+                    value={formDividendYield}
+                    onChange={(e) => setFormDividendYield(e.target.value)}
+                    min={0} max={100} step={0.5}
+                    placeholder="0"
+                    className="w-full border rounded-lg px-3 py-2 mt-1 focus:outline-none focus:border-blue-400"
+                  />
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {formType === 'bond' ? 'Holders earn this % daily (÷365). e.g. 5 = 5%/yr' : '0 = no dividends. e.g. 3 = 3%/yr'}
+                  </div>
                 </div>
 
                 {/* Price & Volatility */}

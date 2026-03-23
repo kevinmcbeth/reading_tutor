@@ -330,6 +330,8 @@ class StockInfo(BaseModel):
     description: Optional[str]
     current_price: float
     change_pct: float = 0.0
+    type: str = "stock"
+    dividend_yield: float = 0.0
 
 
 class StockPricePoint(BaseModel):
@@ -402,6 +404,22 @@ class StockCreate(BaseModel):
     description: Optional[str] = None
     base_price: float = 100.0
     volatility: float = 0.15
+    type: str = "stock"
+    dividend_yield: float = 0.0
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ("stock", "bond"):
+            raise ValueError("Type must be 'stock' or 'bond'")
+        return v
+
+    @field_validator("dividend_yield")
+    @classmethod
+    def validate_dividend_yield(cls, v: float) -> float:
+        if v < 0 or v > 1.0:
+            raise ValueError("Dividend yield must be between 0 and 1.0")
+        return round(v, 4)
 
     @field_validator("symbol")
     @classmethod

@@ -44,7 +44,7 @@ async def _ensure_market_day(pool) -> date:
     if existing > 0:
         return today
 
-    stocks = await pool.fetch("SELECT id, current_price, volatility FROM stocks")
+    stocks = await pool.fetch("SELECT id, current_price, volatility, dividend_yield, type FROM stocks")
     rng = random.Random(today.toordinal())
 
     for stock in stocks:
@@ -69,6 +69,43 @@ async def _ensure_market_day(pool) -> date:
             "UPDATE stocks SET current_price = $1 WHERE id = $2",
             new_price, sid,
         )
+
+    # Pay dividends and bond coupons to holders
+    yield_stocks = [s for s in stocks if s["dividend_yield"] and s["dividend_yield"] > 0]
+    if yield_stocks:
+        yield_ids = [s["id"] for s in yield_stocks]
+        holders = await pool.fetch(
+            """SELECT h.child_id, h.stock_id, h.shares
+               FROM child_stock_holdings h
+               WHERE h.shares > 0 AND h.stock_id = ANY($1::int[])""",
+            yield_ids,
+        )
+        yield_map = {s["id"]: s for s in yield_stocks}
+        for h in holders:
+            stock = yield_map[h["stock_id"]]
+            daily_yield = stock["dividend_yield"] / 365.0
+            payout = round(h["shares"] * stock["current_price"] * daily_yield, 2)
+            if payout < 0.01:
+                continue
+            action = "coupon" if stock["type"] == "bond" else "dividend"
+            result = await pool.execute(
+                """INSERT INTO dividend_payouts (child_id, stock_id, amount, market_day)
+                   VALUES ($1, $2, $3, $4)
+                   ON CONFLICT (child_id, stock_id, market_day) DO NOTHING""",
+                h["child_id"], h["stock_id"], payout, today,
+            )
+            if "INSERT 0 1" in result:
+                await pool.execute(
+                    "UPDATE child_stock_balances SET coins = coins + $1 WHERE child_id = $2",
+                    payout, h["child_id"],
+                )
+                await pool.execute(
+                    """INSERT INTO child_stock_transactions
+                       (child_id, stock_id, action, shares, price_per_share, total)
+                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                    h["child_id"], h["stock_id"], action,
+                    h["shares"], stock["current_price"], payout,
+                )
 
     return today
 
@@ -131,6 +168,8 @@ async def list_stocks(family_id: int = Depends(get_current_family)):
             description=r["description"],
             current_price=r["current_price"],
             change_pct=r["change_pct"] or 0,
+            type=r["type"],
+            dividend_yield=r["dividend_yield"],
         )
         for r in rows
     ]
@@ -192,6 +231,8 @@ async def get_stock_detail(
             description=stock["description"],
             current_price=stock["current_price"],
             change_pct=today_change or 0,
+            type=stock["type"],
+            dividend_yield=stock["dividend_yield"],
         ),
         history=[
             StockPricePoint(
@@ -270,7 +311,8 @@ async def get_portfolio(
     coins = await _ensure_balance(pool, child_id)
 
     holdings = await pool.fetch(
-        """SELECT h.stock_id, h.shares, s.symbol, s.name, s.emoji, s.current_price
+        """SELECT h.stock_id, h.shares, s.symbol, s.name, s.emoji, s.current_price,
+                  s.type, s.dividend_yield
            FROM child_stock_holdings h
            JOIN stocks s ON s.id = h.stock_id
            WHERE h.child_id = $1 AND h.shares > 0
@@ -291,6 +333,8 @@ async def get_portfolio(
             "shares": h["shares"],
             "current_price": h["current_price"],
             "value": round(value, 2),
+            "type": h["type"],
+            "dividend_yield": h["dividend_yield"],
         })
 
     return StockPortfolio(
@@ -547,15 +591,17 @@ async def create_stock(
         raise HTTPException(status_code=409, detail=f"Stock {stock.symbol} already exists")
 
     row = await pool.fetchrow(
-        """INSERT INTO stocks (symbol, name, emoji, category, description, base_price, current_price, volatility)
-           VALUES ($1, $2, $3, $4, $5, $6, $6, $7) RETURNING *""",
+        """INSERT INTO stocks (symbol, name, emoji, category, description, base_price, current_price, volatility, type, dividend_yield)
+           VALUES ($1, $2, $3, $4, $5, $6, $6, $7, $8, $9) RETURNING *""",
         stock.symbol, stock.name, stock.emoji, stock.category,
         stock.description, stock.base_price, stock.volatility,
+        stock.type, stock.dividend_yield,
     )
     return StockInfo(
         id=row["id"], symbol=row["symbol"], name=row["name"],
         emoji=row["emoji"], category=row["category"],
         description=row["description"], current_price=row["current_price"],
+        type=row["type"], dividend_yield=row["dividend_yield"],
     )
 
 
@@ -582,15 +628,16 @@ async def update_stock(
 
     row = await pool.fetchrow(
         """UPDATE stocks SET symbol = $1, name = $2, emoji = $3, category = $4,
-           description = $5, volatility = $6
-           WHERE id = $7 RETURNING *""",
+           description = $5, volatility = $6, type = $7, dividend_yield = $8
+           WHERE id = $9 RETURNING *""",
         stock.symbol, stock.name, stock.emoji, stock.category,
-        stock.description, stock.volatility, stock_id,
+        stock.description, stock.volatility, stock.type, stock.dividend_yield, stock_id,
     )
     return StockInfo(
         id=row["id"], symbol=row["symbol"], name=row["name"],
         emoji=row["emoji"], category=row["category"],
         description=row["description"], current_price=row["current_price"],
+        type=row["type"], dividend_yield=row["dividend_yield"],
     )
 
 
@@ -616,6 +663,7 @@ async def delete_stock(
         )
 
     # Clean up related data
+    await pool.execute("DELETE FROM dividend_payouts WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM stock_stories WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM stock_price_history WHERE stock_id = $1", stock_id)
     await pool.execute("DELETE FROM child_stock_transactions WHERE stock_id = $1", stock_id)

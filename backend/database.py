@@ -193,8 +193,21 @@ CREATE TABLE IF NOT EXISTS stocks (
     base_price REAL NOT NULL DEFAULT 100.0,
     current_price REAL NOT NULL DEFAULT 100.0,
     volatility REAL NOT NULL DEFAULT 0.15,
+    type TEXT NOT NULL DEFAULT 'stock',
+    dividend_yield REAL NOT NULL DEFAULT 0.0,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Ensure type and dividend_yield columns exist on older DBs
+DO $$ BEGIN
+    ALTER TABLE stocks ADD COLUMN type TEXT NOT NULL DEFAULT 'stock';
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE stocks ADD COLUMN dividend_yield REAL NOT NULL DEFAULT 0.0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS stock_price_history (
     id SERIAL PRIMARY KEY,
@@ -239,6 +252,16 @@ CREATE TABLE IF NOT EXISTS child_stock_transactions (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS dividend_payouts (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    amount REAL NOT NULL,
+    market_day DATE NOT NULL,
+    UNIQUE(child_id, stock_id, market_day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dividend_payouts_day ON dividend_payouts(market_day);
 CREATE INDEX IF NOT EXISTS idx_stock_price_history_stock_day ON stock_price_history(stock_id, market_day DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_stories_stock_level_dir ON stock_stories(stock_id, fp_level, direction);
 CREATE INDEX IF NOT EXISTS idx_child_stock_holdings_child ON child_stock_holdings(child_id);
