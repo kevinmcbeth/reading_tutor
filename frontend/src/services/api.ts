@@ -355,14 +355,14 @@ export async function fetchRewardItems(activeOnly: boolean = true): Promise<Rewa
 export async function createRewardItem(name: string, cost: number, emoji?: string, description?: string): Promise<RewardItemResponse> {
   return fetchJson<RewardItemResponse>('/rewards/items', {
     method: 'POST',
-    body: JSON.stringify({ name, cost, emoji: emoji || '🎁', description: description || null }),
+    body: JSON.stringify({ name, cost, emoji: emoji || '\u{1f381}', description: description || null }),
   });
 }
 
 export async function updateRewardItem(id: number, name: string, cost: number, emoji?: string, description?: string): Promise<RewardItemResponse> {
   return fetchJson<RewardItemResponse>(`/rewards/items/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ name, cost, emoji: emoji || '🎁', description: description || null }),
+    body: JSON.stringify({ name, cost, emoji: emoji || '\u{1f381}', description: description || null }),
   });
 }
 
@@ -421,4 +421,99 @@ export async function setExchangeRate(wordsPerCoin: number, childId?: number): P
 
 export async function clearChildExchangeRate(childId: number): Promise<unknown> {
   return fetchJson(`/rewards/exchange-rate/${childId}`, { method: 'DELETE' });
+}
+
+// --- Stock Market ---
+
+export interface StockInfoResponse {
+  id: number;
+  symbol: string;
+  name: string;
+  emoji: string;
+  category: string;
+  description: string | null;
+  current_price: number;
+  change_pct: number;
+}
+
+export interface StockPricePointResponse {
+  price: number;
+  change_pct: number;
+  market_day: string;
+}
+
+export interface StockDetailResponse {
+  stock: StockInfoResponse;
+  history: StockPricePointResponse[];
+  story: { headline: string; body: string } | null;
+}
+
+export interface StockPortfolioResponse {
+  coins: number;
+  holdings: {
+    stock_id: number;
+    symbol: string;
+    name: string;
+    emoji: string;
+    shares: number;
+    current_price: number;
+    value: number;
+  }[];
+  total_value: number;
+}
+
+export interface StockNewsItemResponse {
+  stock_symbol: string;
+  stock_name: string;
+  stock_emoji: string;
+  direction: string;
+  headline: string;
+  body: string;
+  change_pct: number;
+}
+
+export interface StockTradeResponseData {
+  action: string;
+  symbol: string;
+  shares: number;
+  price_per_share: number;
+  total: number;
+  coins_remaining: number;
+}
+
+export async function fetchStocks(): Promise<StockInfoResponse[]> {
+  return fetchJson<StockInfoResponse[]>('/stockmarket/stocks');
+}
+
+export async function fetchStockDetail(stockId: number, childId: string): Promise<StockDetailResponse> {
+  return fetchJson<StockDetailResponse>(`/stockmarket/stocks/${stockId}?child_id=${childId}`);
+}
+
+export async function fetchStockPortfolio(childId: string): Promise<StockPortfolioResponse> {
+  return fetchJson<StockPortfolioResponse>(`/stockmarket/portfolio?child_id=${childId}`);
+}
+
+export async function fetchStockNews(childId: string): Promise<StockNewsItemResponse[]> {
+  return fetchJson<StockNewsItemResponse[]>(`/stockmarket/news?child_id=${childId}`);
+}
+
+export async function buyStock(stockId: number, shares: number, childId: string): Promise<StockTradeResponseData> {
+  return fetchJson<StockTradeResponseData>(`/stockmarket/buy?child_id=${childId}`, {
+    method: 'POST',
+    body: JSON.stringify({ stock_id: stockId, shares }),
+  });
+}
+
+export async function sellStock(stockId: number, shares: number, childId: string): Promise<StockTradeResponseData> {
+  return fetchJson<StockTradeResponseData>(`/stockmarket/sell?child_id=${childId}`, {
+    method: 'POST',
+    body: JSON.stringify({ stock_id: stockId, shares }),
+  });
+}
+
+export async function depositStockCoins(childId: string, coins: number): Promise<{ coins_deposited: number; words_spent: number; stock_balance: number; words_remaining: number }> {
+  return fetchJson(`/stockmarket/deposit?child_id=${childId}`, {
+    method: 'POST',
+    body: JSON.stringify({ coins }),
+  });
 }

@@ -195,7 +195,7 @@ export default function ChildLoginPage() {
             </h2>
             <p className="text-gray-500 text-center mb-8">What would you like to do?</p>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <button
                 onClick={() => { setSelectedChildForMode(null); navigate('/library'); }}
                 className="bg-gradient-to-br from-blue-400 to-cyan-400 rounded-2xl p-6 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
@@ -212,6 +212,15 @@ export default function ChildLoginPage() {
                 <div className="text-5xl mb-3">🏆</div>
                 <div className="text-xl font-bold">Leveled Reading</div>
                 <div className="text-sm text-white/80 mt-1">Level up your skills</div>
+              </button>
+
+              <button
+                onClick={() => { setSelectedChildForMode(null); navigate('/stockmarket'); }}
+                className="bg-gradient-to-br from-green-400 to-emerald-500 rounded-2xl p-6 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
+              >
+                <div className="text-5xl mb-3">📈</div>
+                <div className="text-xl font-bold">Stock Market</div>
+                <div className="text-sm text-white/80 mt-1">Trade silly stocks</div>
               </button>
             </div>
 

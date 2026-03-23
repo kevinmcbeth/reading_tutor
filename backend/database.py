@@ -181,6 +181,69 @@ CREATE INDEX IF NOT EXISTS idx_reward_items_family ON reward_items(family_id);
 CREATE INDEX IF NOT EXISTS idx_redemptions_child ON redemptions(child_id);
 CREATE INDEX IF NOT EXISTS idx_coin_conversions_child ON coin_conversions(child_id);
 
+-- ========== Stock Market ==========
+
+CREATE TABLE IF NOT EXISTS stocks (
+    id SERIAL PRIMARY KEY,
+    symbol TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    base_price REAL NOT NULL DEFAULT 100.0,
+    current_price REAL NOT NULL DEFAULT 100.0,
+    volatility REAL NOT NULL DEFAULT 0.15,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS stock_price_history (
+    id SERIAL PRIMARY KEY,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    price REAL NOT NULL,
+    change_pct REAL NOT NULL DEFAULT 0,
+    market_day DATE NOT NULL,
+    UNIQUE(stock_id, market_day)
+);
+
+CREATE TABLE IF NOT EXISTS stock_stories (
+    id SERIAL PRIMARY KEY,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    fp_level TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    body TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS child_stock_balances (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL UNIQUE,
+    coins REAL NOT NULL DEFAULT 0.0
+);
+
+CREATE TABLE IF NOT EXISTS child_stock_holdings (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    shares INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(child_id, stock_id)
+);
+
+CREATE TABLE IF NOT EXISTS child_stock_transactions (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    stock_id INTEGER REFERENCES stocks(id) NOT NULL,
+    action TEXT NOT NULL,
+    shares INTEGER NOT NULL,
+    price_per_share REAL NOT NULL,
+    total REAL NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_price_history_stock_day ON stock_price_history(stock_id, market_day DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_stories_stock_level_dir ON stock_stories(stock_id, fp_level, direction);
+CREATE INDEX IF NOT EXISTS idx_child_stock_holdings_child ON child_stock_holdings(child_id);
+CREATE INDEX IF NOT EXISTS idx_child_stock_transactions_child ON child_stock_transactions(child_id, created_at DESC);
+
 -- Analytics & scaling indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_child_completed ON sessions(child_id, completed_at) WHERE completed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_session_words_correct ON session_words(word_id, correct);
@@ -241,6 +304,45 @@ async def seed_fp_levels(conn) -> None:
     logger.info("Seeded %d F&P level definitions", len(FP_LEVEL_DATA))
 
 
+STOCK_DATA = [
+    ("UNIC", "Unicorn Glitter Co.", "🦄", "magical", "Makes sparkly glitter from unicorn manes", 120.0, 0.20),
+    ("BNNA", "Banana Pants Inc.", "🍌", "fashion", "Sells pants shaped like bananas", 45.0, 0.25),
+    ("DINO", "Dino Egg Farms", "🦕", "food", "Grows dinosaur eggs for breakfast", 200.0, 0.18),
+    ("SLME", "Super Slime Labs", "🧪", "toys", "Invents new kinds of slime every week", 80.0, 0.22),
+    ("ROBO", "Robot Puppy Corp.", "🤖", "pets", "Builds robot puppies that fetch real sticks", 150.0, 0.15),
+    ("PIZZ", "Pizza Planet Delivery", "🍕", "food", "Delivers pizza by rocket ship", 95.0, 0.12),
+    ("RAIN", "Rainbow Bridge Builders", "🌈", "construction", "Builds real rainbow bridges between cities", 175.0, 0.17),
+    ("SOCK", "Lost Sock Detective Agency", "🧦", "services", "Finds socks that went missing in the dryer", 30.0, 0.30),
+    ("PILW", "Pillow Fort Architects", "🏰", "construction", "Designs epic pillow forts for kids", 65.0, 0.20),
+    ("BBLE", "Bubble Gum Space Program", "🫧", "space", "Blows bubbles big enough to fly to the moon", 110.0, 0.25),
+    ("MNST", "Monster Truck Daycare", "🚛", "transport", "Monster trucks that drive kids to school", 88.0, 0.19),
+    ("JELL", "Jelly Bean Weather Service", "🫘", "weather", "Predicts weather by tasting jelly beans", 55.0, 0.23),
+    ("DRAG", "Dragon Ride Airlines", "🐉", "transport", "Fly anywhere on a friendly dragon", 250.0, 0.16),
+    ("CAKE", "Volcano Cake Bakery", "🌋", "food", "Bakes cakes that actually erupt with frosting", 70.0, 0.21),
+    ("FART", "Fart Jar Collections", "💨", "collectibles", "Bottles rare and exotic farts from around the world", 15.0, 0.35),
+    ("YETI", "Yeti Ice Cream Trucks", "🧊", "food", "Yetis that deliver ice cream in blizzards", 130.0, 0.14),
+    ("WAND", "Magic Wand Repairs", "🪄", "services", "Fixes broken magic wands same day", 90.0, 0.18),
+    ("CLDS", "Cloud Furniture Store", "☁️", "furniture", "Sells chairs and beds made of real clouds", 105.0, 0.16),
+    ("POOP", "Golden Poop Trophy Co.", "💩", "awards", "Makes trophies shaped like golden poops", 25.0, 0.32),
+    ("NINJA", "Ninja Cat Academy", "🐱", "education", "Trains cats to be sneaky ninjas", 140.0, 0.20),
+]
+
+
+async def seed_stocks(conn) -> None:
+    """Insert stock definitions if not already present."""
+    existing = await conn.fetchval("SELECT COUNT(*) FROM stocks")
+    if existing > 0:
+        return
+    for symbol, name, emoji, category, desc, base_price, volatility in STOCK_DATA:
+        await conn.execute(
+            """INSERT INTO stocks (symbol, name, emoji, category, description, base_price, current_price, volatility)
+               VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
+               ON CONFLICT (symbol) DO NOTHING""",
+            symbol, name, emoji, category, desc, base_price, volatility,
+        )
+    logger.info("Seeded %d stocks", len(STOCK_DATA))
+
+
 async def init_db() -> None:
     """Initialize the database connection pool and create tables."""
     global _pool
@@ -252,6 +354,14 @@ async def init_db() -> None:
     async with _pool.acquire() as conn:
         await conn.execute(SCHEMA)
         await seed_fp_levels(conn)
+        await seed_stocks(conn)
+        # Seed stock stories after stocks exist
+        from services.stock_stories import seed_stock_stories
+        stock_rows = await conn.fetch("SELECT id, symbol, name, emoji FROM stocks ORDER BY id")
+        if stock_rows:
+            stocks = [(r["id"], r["symbol"], r["name"], r["emoji"]) for r in stock_rows]
+            count = await seed_stock_stories(conn, stocks)
+            logger.info("Stock stories: %d in database", count)
 
 
 async def close_db() -> None:

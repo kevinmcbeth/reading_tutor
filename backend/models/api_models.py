@@ -308,3 +308,78 @@ class BalanceResponse(BaseModel):
     coins_balance: int
     total_coins_earned: int
     total_coins_spent: int
+
+
+# --- Stock Market ---
+
+class StockInfo(BaseModel):
+    id: int
+    symbol: str
+    name: str
+    emoji: str
+    category: str
+    description: Optional[str]
+    current_price: float
+    change_pct: float = 0.0
+
+
+class StockPricePoint(BaseModel):
+    price: float
+    change_pct: float
+    market_day: str
+
+
+class StockDetail(BaseModel):
+    stock: StockInfo
+    history: list[StockPricePoint]
+    story: Optional[dict] = None
+
+
+class StockPortfolio(BaseModel):
+    coins: float
+    holdings: list[dict]
+    total_value: float
+
+
+class StockTradeRequest(BaseModel):
+    stock_id: int
+    shares: int
+
+    @field_validator("shares")
+    @classmethod
+    def positive_shares(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Must trade at least 1 share")
+        if v > 100:
+            raise ValueError("Maximum 100 shares per trade")
+        return v
+
+
+class StockTradeResponse(BaseModel):
+    action: str
+    symbol: str
+    shares: int
+    price_per_share: float
+    total: float
+    coins_remaining: float
+
+
+class StockNewsItem(BaseModel):
+    stock_symbol: str
+    stock_name: str
+    stock_emoji: str
+    direction: str
+    headline: str
+    body: str
+    change_pct: float
+
+
+class StockDepositRequest(BaseModel):
+    coins: int
+
+    @field_validator("coins")
+    @classmethod
+    def positive_coins(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Must deposit at least 1 coin")
+        return v
