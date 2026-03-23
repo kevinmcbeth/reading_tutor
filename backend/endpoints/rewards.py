@@ -59,16 +59,28 @@ async def _get_coin_balance(pool, child_id: int) -> tuple[int, int]:
     Coins come from both reading word conversions and math problem conversions.
     Math conversions insert into coin_conversions with words_spent=0, so they
     are already included in this SUM.
+    Spent includes reward redemptions AND net coins locked in stock market.
     """
     earned = await pool.fetchval(
         "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1",
         child_id,
     )
-    spent = await pool.fetchval(
+    reward_spent = await pool.fetchval(
         "SELECT COALESCE(SUM(cost), 0) FROM redemptions WHERE child_id = $1",
         child_id,
     )
-    return int(earned), int(spent)
+    # Net coins locked in stock market: buys minus sells/dividends/coupons
+    stock_bought = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action = 'buy'",
+        child_id,
+    )
+    stock_returned = await pool.fetchval(
+        "SELECT COALESCE(SUM(total), 0) FROM child_stock_transactions WHERE child_id = $1 AND action != 'buy'",
+        child_id,
+    )
+    net_in_stocks = float(stock_bought) - float(stock_returned)
+    total_spent = int(reward_spent) + max(0, int(net_in_stocks))
+    return int(earned), total_spent
 
 
 # --- Reward item CRUD (parent) ---
@@ -274,8 +286,13 @@ async def convert_words_to_coins(
                 "SELECT COALESCE(SUM(score), 0) FROM sessions WHERE child_id = $1 AND completed_at IS NOT NULL",
                 child_id,
             )
+            # Lock the child's rows first, then aggregate
+            await conn.fetch(
+                "SELECT id FROM coin_conversions WHERE child_id = $1 FOR UPDATE",
+                child_id,
+            )
             words_converted = await conn.fetchval(
-                "SELECT COALESCE(SUM(words_spent), 0) FROM coin_conversions WHERE child_id = $1 FOR UPDATE",
+                "SELECT COALESCE(SUM(words_spent), 0) FROM coin_conversions WHERE child_id = $1",
                 child_id,
             )
             words_available = int(words_earned) - int(words_converted)
