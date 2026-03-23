@@ -17,6 +17,16 @@ POLL_INTERVAL_INITIAL = 1  # seconds
 POLL_INTERVAL_MAX = 10  # seconds
 POLL_BACKOFF_FACTOR = 1.5
 
+# Reusable HTTP client for connection pooling
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=httpx.Timeout(300.0))
+    return _client
+
 
 def _build_workflow(
     prompt: str, negative_prompt: str, width: int, height: int
@@ -96,62 +106,63 @@ async def generate_image(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-            # Queue the prompt
-            resp = await client.post(
-                f"{settings.COMFYUI_URL}/prompt",
-                json={"prompt": workflow},
+        client = _get_client()
+        # Queue the prompt
+        resp = await client.post(
+            f"{settings.COMFYUI_URL}/prompt",
+            json={"prompt": workflow},
+        )
+        resp.raise_for_status()
+        prompt_id = resp.json()["prompt_id"]
+
+        # Poll for completion with exponential backoff
+        elapsed = 0.0
+        interval = POLL_INTERVAL_INITIAL
+        while elapsed < MAX_POLL_TIME:
+            await asyncio.sleep(interval)
+            elapsed += interval
+            interval = min(interval * POLL_BACKOFF_FACTOR, POLL_INTERVAL_MAX)
+
+            hist_resp = await client.get(
+                f"{settings.COMFYUI_URL}/history/{prompt_id}"
             )
-            resp.raise_for_status()
-            prompt_id = resp.json()["prompt_id"]
+            hist_resp.raise_for_status()
+            history = hist_resp.json()
 
-            # Poll for completion with exponential backoff
-            elapsed = 0.0
-            interval = POLL_INTERVAL_INITIAL
-            while elapsed < MAX_POLL_TIME:
-                await asyncio.sleep(interval)
-                elapsed += interval
-                interval = min(interval * POLL_BACKOFF_FACTOR, POLL_INTERVAL_MAX)
+            if prompt_id not in history:
+                continue
 
-                hist_resp = await client.get(
-                    f"{settings.COMFYUI_URL}/history/{prompt_id}"
+            job_data = history[prompt_id]
+            if job_data.get("status", {}).get("completed", False) or "outputs" in job_data:
+                # Find the output image filename
+                outputs = job_data.get("outputs", {})
+                filename = None
+                for node_output in outputs.values():
+                    images = node_output.get("images", [])
+                    if images:
+                        filename = images[0].get("filename")
+                        break
+
+                if not filename:
+                    logger.error("No output image found in ComfyUI response")
+                    return False
+
+                # Download the image
+                img_resp = await client.get(
+                    f"{settings.COMFYUI_URL}/view",
+                    params={
+                        "filename": filename,
+                        "subfolder": "",
+                        "type": "output",
+                    },
                 )
-                hist_resp.raise_for_status()
-                history = hist_resp.json()
+                img_resp.raise_for_status()
+                # Non-blocking file write
+                await asyncio.to_thread(output.write_bytes, img_resp.content)
+                return True
 
-                if prompt_id not in history:
-                    continue
-
-                job_data = history[prompt_id]
-                if job_data.get("status", {}).get("completed", False) or "outputs" in job_data:
-                    # Find the output image filename
-                    outputs = job_data.get("outputs", {})
-                    filename = None
-                    for node_output in outputs.values():
-                        images = node_output.get("images", [])
-                        if images:
-                            filename = images[0].get("filename")
-                            break
-
-                    if not filename:
-                        logger.error("No output image found in ComfyUI response")
-                        return False
-
-                    # Download the image
-                    img_resp = await client.get(
-                        f"{settings.COMFYUI_URL}/view",
-                        params={
-                            "filename": filename,
-                            "subfolder": "",
-                            "type": "output",
-                        },
-                    )
-                    img_resp.raise_for_status()
-                    output.write_bytes(img_resp.content)
-                    return True
-
-            logger.error("ComfyUI image generation timed out after %ds", MAX_POLL_TIME)
-            return False
+        logger.error("ComfyUI image generation timed out after %ds", MAX_POLL_TIME)
+        return False
 
     except httpx.HTTPError as exc:
         logger.error("ComfyUI HTTP error: %s", exc)
