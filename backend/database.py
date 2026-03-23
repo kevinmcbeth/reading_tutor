@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS families (
     created_at TIMESTAMP DEFAULT NOW()
 );
 
+-- Ensure words_per_coin column exists on families (may be missing on older DBs)
+DO $$ BEGIN
+    ALTER TABLE families ADD COLUMN words_per_coin INTEGER NOT NULL DEFAULT 10;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS children (
     id SERIAL PRIMARY KEY,
     family_id INTEGER REFERENCES families(id) NOT NULL,
@@ -27,8 +33,15 @@ CREATE TABLE IF NOT EXISTS children (
     pin_hash TEXT,
     fp_level TEXT,
     fp_level_set_by TEXT DEFAULT 'auto',
+    words_per_coin INTEGER,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+-- Ensure words_per_coin column exists on children (may be missing on older DBs)
+DO $$ BEGIN
+    ALTER TABLE children ADD COLUMN words_per_coin INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS stories (
     id SERIAL PRIMARY KEY,

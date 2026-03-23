@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from typing import Optional
 
 from auth import get_current_family
 from database import get_pool
@@ -23,6 +24,19 @@ async def _verify_child_ownership(pool, child_id: int, family_id: int):
     )
     if not row:
         raise HTTPException(status_code=404, detail="Child not found")
+
+
+async def _get_exchange_rate(pool, child_id: int, family_id: int) -> int:
+    """Get the effective exchange rate for a child (child override or family default)."""
+    child_rate = await pool.fetchval(
+        "SELECT words_per_coin FROM children WHERE id = $1", child_id
+    )
+    if child_rate is not None:
+        return child_rate
+    family_rate = await pool.fetchval(
+        "SELECT words_per_coin FROM families WHERE id = $1", family_id
+    )
+    return family_rate or 10
 
 
 async def _get_word_balance(pool, child_id: int) -> tuple[int, int]:
@@ -146,23 +160,27 @@ async def deactivate_item(
 
 class ExchangeRateUpdate(BaseModel):
     words_per_coin: int
-
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        return v
+    child_id: Optional[int] = None
 
 
 @router.get("/exchange-rate")
 async def get_exchange_rate(family_id: int = Depends(get_current_family)):
     pool = get_pool()
-    rate = await pool.fetchval(
+    family_rate = await pool.fetchval(
         "SELECT words_per_coin FROM families WHERE id = $1", family_id
     )
-    return {"words_per_coin": rate}
+    # Also return per-child rates
+    children = await pool.fetch(
+        "SELECT id, name, words_per_coin FROM children WHERE family_id = $1 ORDER BY name",
+        family_id,
+    )
+    return {
+        "family_rate": family_rate or 10,
+        "children": [
+            {"child_id": c["id"], "name": c["name"], "words_per_coin": c["words_per_coin"]}
+            for c in children
+        ],
+    }
 
 
 @router.put("/exchange-rate")
@@ -173,11 +191,36 @@ async def set_exchange_rate(
     if body.words_per_coin < 1 or body.words_per_coin > 10000:
         raise HTTPException(status_code=400, detail="Rate must be between 1 and 10,000")
     pool = get_pool()
+
+    if body.child_id is not None:
+        # Per-child rate
+        await _verify_child_ownership(pool, body.child_id, family_id)
+        await pool.execute(
+            "UPDATE children SET words_per_coin = $1 WHERE id = $2",
+            body.words_per_coin, body.child_id,
+        )
+        return {"child_id": body.child_id, "words_per_coin": body.words_per_coin}
+    else:
+        # Family default
+        await pool.execute(
+            "UPDATE families SET words_per_coin = $1 WHERE id = $2",
+            body.words_per_coin, family_id,
+        )
+        return {"words_per_coin": body.words_per_coin}
+
+
+@router.delete("/exchange-rate/{child_id}")
+async def clear_child_exchange_rate(
+    child_id: int,
+    family_id: int = Depends(get_current_family),
+):
+    """Remove per-child override so they use the family default."""
+    pool = get_pool()
+    await _verify_child_ownership(pool, child_id, family_id)
     await pool.execute(
-        "UPDATE families SET words_per_coin = $1 WHERE id = $2",
-        body.words_per_coin, family_id,
+        "UPDATE children SET words_per_coin = NULL WHERE id = $1", child_id
     )
-    return {"words_per_coin": body.words_per_coin}
+    return {"detail": "Child rate cleared, using family default"}
 
 
 # --- Balance & Conversion (child-facing) ---
@@ -193,9 +236,7 @@ async def get_balance(
 
     words_earned, words_converted = await _get_word_balance(pool, child_id)
     coins_earned, coins_spent = await _get_coin_balance(pool, child_id)
-    rate = await pool.fetchval(
-        "SELECT words_per_coin FROM families WHERE id = $1", family_id
-    )
+    rate = await _get_exchange_rate(pool, child_id, family_id)
 
     return BalanceResponse(
         child_id=child_id,
@@ -216,9 +257,7 @@ async def convert_words_to_coins(
     pool = get_pool()
     await _verify_child_ownership(pool, child_id, family_id)
 
-    rate = await pool.fetchval(
-        "SELECT words_per_coin FROM families WHERE id = $1", family_id
-    )
+    rate = await _get_exchange_rate(pool, child_id, family_id)
     words_needed = coins * rate
 
     words_earned, words_converted = await _get_word_balance(pool, child_id)

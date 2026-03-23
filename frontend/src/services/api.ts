@@ -397,13 +397,28 @@ export async function convertWordsToCoins(childId: string, coins: number): Promi
   });
 }
 
-export async function fetchExchangeRate(): Promise<{ words_per_coin: number }> {
-  return fetchJson<{ words_per_coin: number }>('/rewards/exchange-rate');
+export interface ExchangeRateChild {
+  child_id: number;
+  name: string;
+  words_per_coin: number | null;
 }
 
-export async function setExchangeRate(wordsPerCoin: number): Promise<{ words_per_coin: number }> {
-  return fetchJson<{ words_per_coin: number }>('/rewards/exchange-rate', {
+export interface ExchangeRateResponse {
+  family_rate: number;
+  children: ExchangeRateChild[];
+}
+
+export async function fetchExchangeRate(): Promise<ExchangeRateResponse> {
+  return fetchJson<ExchangeRateResponse>('/rewards/exchange-rate');
+}
+
+export async function setExchangeRate(wordsPerCoin: number, childId?: number): Promise<unknown> {
+  return fetchJson('/rewards/exchange-rate', {
     method: 'PUT',
-    body: JSON.stringify({ words_per_coin: wordsPerCoin }),
+    body: JSON.stringify({ words_per_coin: wordsPerCoin, child_id: childId ?? null }),
   });
+}
+
+export async function clearChildExchangeRate(childId: number): Promise<unknown> {
+  return fetchJson(`/rewards/exchange-rate/${childId}`, { method: 'DELETE' });
 }

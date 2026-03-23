@@ -124,9 +124,12 @@ export default function RewardShopPage() {
         <div className="grid grid-cols-2 gap-4 mb-8">
           {/* Words Balance */}
           <div className="bg-white/90 rounded-3xl p-5 shadow-xl text-center">
-            <div className="text-sm text-gray-500 mb-1">Words Available</div>
+            <div className="text-sm text-gray-500 mb-1">Words to Convert</div>
             <div className="text-4xl font-extrabold text-green-600 mb-1">
               {balance?.words_available ?? 0}
+            </div>
+            <div className="text-xs text-gray-400">
+              {selectedChild?.total_words_read ?? 0} total read
             </div>
             <button
               onClick={() => setShowConvert(true)}
