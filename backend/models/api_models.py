@@ -301,6 +301,15 @@ class RedemptionResponse(BaseModel):
     redeemed_at: Optional[str]
 
 
+class WalletItemResponse(BaseModel):
+    item_id: int
+    item_name: str
+    item_emoji: str
+    item_description: Optional[str]
+    quantity: int
+    last_redeemed: Optional[str]
+
+
 class BalanceResponse(BaseModel):
     child_id: int
     words_available: int

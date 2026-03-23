@@ -7,9 +7,11 @@ import {
   redeemItem,
   convertWordsToCoins,
   fetchRedemptionHistory,
+  fetchWallet,
   RewardItemResponse,
   BalanceResponse,
   RedemptionResponse,
+  WalletItem,
 } from '../services/api';
 
 export default function RewardShopPage() {
@@ -22,7 +24,8 @@ export default function RewardShopPage() {
   const [redeeming, setRedeeming] = useState<number | null>(null);
   const [showSuccess, setShowSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
+  const [wallet, setWallet] = useState<WalletItem[]>([]);
+  const [tab, setTab] = useState<'shop' | 'wallet' | 'history'>('shop');
   const [showConvert, setShowConvert] = useState(false);
   const [convertAmount, setConvertAmount] = useState('');
   const [converting, setConverting] = useState(false);
@@ -32,14 +35,16 @@ export default function RewardShopPage() {
   const loadData = useCallback(async () => {
     if (!childId) return;
     try {
-      const [itemsData, balanceData, historyData] = await Promise.all([
+      const [itemsData, balanceData, historyData, walletData] = await Promise.all([
         fetchRewardItems(),
         fetchBalance(childId),
         fetchRedemptionHistory(childId),
+        fetchWallet(childId),
       ]);
       setItems(itemsData);
       setBalance(balanceData);
       setHistory(historyData);
+      setWallet(walletData);
     } catch (err) {
       console.error('Failed to load reward shop:', err);
     } finally {
@@ -112,12 +117,19 @@ export default function RewardShopPage() {
           <h1 className="text-4xl font-extrabold text-white drop-shadow-lg">
             Reward Shop
           </h1>
-          <button
-            onClick={() => setShowHistory(!showHistory)}
-            className="text-sm bg-white/30 hover:bg-white/50 text-white px-4 py-2 rounded-full transition"
-          >
-            {showHistory ? 'Shop' : 'History'}
-          </button>
+          <div className="flex gap-1 bg-white/20 rounded-full p-1">
+            {(['shop', 'wallet', 'history'] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className={`text-sm px-4 py-1.5 rounded-full transition font-medium capitalize ${
+                  tab === t ? 'bg-white text-amber-600 shadow' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                {t === 'wallet' ? 'My Wallet' : t === 'shop' ? 'Shop' : 'History'}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Balance Cards */}
@@ -226,7 +238,7 @@ export default function RewardShopPage() {
           </div>
         )}
 
-        {showHistory ? (
+        {tab === 'history' ? (
           /* Redemption History */
           <div>
             <h2 className="text-2xl font-bold text-white mb-4 drop-shadow">Redemption History</h2>
@@ -246,6 +258,39 @@ export default function RewardShopPage() {
                       </div>
                     </div>
                     <div className="text-lg font-bold text-amber-600">-{r.cost} 🪙</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : tab === 'wallet' ? (
+          /* Wallet / Trophy Case */
+          <div>
+            <h2 className="text-2xl font-bold text-white mb-4 drop-shadow">My Wallet</h2>
+            {wallet.length === 0 ? (
+              <div className="bg-white/80 rounded-3xl p-8 text-center text-gray-500 text-lg">
+                No rewards collected yet. Visit the shop to redeem some!
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {wallet.map((w) => (
+                  <div
+                    key={w.item_id}
+                    className="bg-white/90 rounded-3xl p-6 shadow-xl flex flex-col items-center text-center relative"
+                  >
+                    {w.quantity > 1 && (
+                      <div className="absolute -top-2 -right-2 bg-amber-500 text-white text-sm font-bold w-8 h-8 rounded-full flex items-center justify-center shadow-lg">
+                        {w.quantity}
+                      </div>
+                    )}
+                    <span className="text-6xl mb-3">{w.item_emoji}</span>
+                    <h3 className="text-xl font-bold text-gray-800 mb-1">{w.item_name}</h3>
+                    {w.item_description && (
+                      <p className="text-sm text-gray-500 mb-2">{w.item_description}</p>
+                    )}
+                    <div className="text-xs text-gray-400 mt-auto">
+                      {w.quantity === 1 ? 'Collected' : `Collected ${w.quantity}x`}
+                    </div>
                   </div>
                 ))}
               </div>
