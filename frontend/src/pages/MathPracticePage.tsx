@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { useMathSession } from '../hooks/useMathSession';
 import ProblemDisplay from '../components/math/ProblemDisplay';
 import AnswerInput from '../components/math/AnswerInput';
@@ -19,15 +18,13 @@ export default function MathPracticePage() {
   const { subject } = useParams<{ subject: string }>();
   const navigate = useNavigate();
   const { selectedChild } = useAuth();
-  const speech = useSpeechRecognition();
   const math = useMathSession();
 
-  const [phase, setPhase] = useState<'loading' | 'problem' | 'feedback' | 'complete'>('loading');
+  const [phase, setPhase] = useState<'loading' | 'problem' | 'complete'>('loading');
   const [waitingForNext, setWaitingForNext] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [completionError, setCompletionError] = useState(false);
   const submittingRef = useRef(false);
-  const lastProcessedTranscript = useRef('');
 
   // Start session on mount
   useEffect(() => {
@@ -46,49 +43,25 @@ export default function MathPracticePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [math.session, phase]);
 
-  // Process speech result — guarded against double-submission
-  useEffect(() => {
-    if (!speech.transcript || speech.isProcessing || !math.currentProblem) return;
-    if (submittingRef.current) return;
-    if (speech.transcript === lastProcessedTranscript.current) return;
-
-    const answer = speech.transcript.trim();
-    if (!answer) return;
-
+  const handleSubmitAnswer = useCallback((answer: string) => {
+    if (submittingRef.current || waitingForNext) return;
     submittingRef.current = true;
-    lastProcessedTranscript.current = speech.transcript;
 
-    const alternatives = speech.alternatives.map(a => a.text);
-    math.submitAnswer(answer, speech.transcript, alternatives).then(result => {
-      // Show result briefly, then advance
+    math.submitAnswer(answer).then(result => {
       setWaitingForNext(true);
       setTimeout(() => {
         setWaitingForNext(false);
         submittingRef.current = false;
-        lastProcessedTranscript.current = '';
         if (math.problemNumber >= math.totalProblems) {
           setPhase('complete');
         } else {
           math.nextProblem();
         }
-      }, result.correct ? 1200 : 2500);
+      }, result.correct ? 800 : 2000);
     }).catch(() => {
       submittingRef.current = false;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speech.transcript, speech.isProcessing]);
-
-  const handleMicPress = useCallback(() => {
-    if (speech.isListening) {
-      speech.stopListening();
-    } else if (!waitingForNext && math.currentProblem) {
-      // Pass expected answer as target word for Whisper biasing
-      speech.startListening(math.currentProblem.problem_data.a !== undefined
-        ? String(parseInt(math.currentProblem.display.split('=')[0].trim().split(/\s+/).pop() || ''))
-        : undefined
-      );
-    }
-  }, [speech, waitingForNext, math.currentProblem]);
+  }, [math, waitingForNext]);
 
   const handleComplete = useCallback(async () => {
     setCompleting(true);
@@ -156,7 +129,7 @@ export default function MathPracticePage() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-4 gap-8">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 gap-6">
         {math.currentProblem && phase === 'problem' && (
           <>
             <StreakCounter
@@ -174,10 +147,7 @@ export default function MathPracticePage() {
             </div>
 
             <AnswerInput
-              transcript={speech.transcript}
-              isListening={speech.isListening}
-              isProcessing={speech.isProcessing}
-              onMicPress={handleMicPress}
+              onSubmit={handleSubmitAnswer}
               lastResult={math.lastResult}
               disabled={waitingForNext}
             />
