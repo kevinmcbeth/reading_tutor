@@ -1,58 +1,86 @@
-import MicButton from '../MicButton';
+import { useState, useCallback } from 'react';
 
 interface AnswerInputProps {
-  transcript: string;
-  isListening: boolean;
-  isProcessing: boolean;
-  onMicPress: () => void;
+  onSubmit: (answer: string) => void;
   lastResult: { correct: boolean; correct_answer: string; child_answer: string } | null;
   disabled?: boolean;
 }
 
-export default function AnswerInput({
-  transcript,
-  isListening,
-  isProcessing,
-  onMicPress,
-  lastResult,
-  disabled,
-}: AnswerInputProps) {
+const BUTTON_BASE = 'text-3xl font-bold rounded-2xl shadow transition-all duration-150 active:scale-95 select-none';
+
+export default function AnswerInput({ onSubmit, lastResult, disabled }: AnswerInputProps) {
+  const [value, setValue] = useState('');
+
+  const handleDigit = useCallback((digit: string) => {
+    if (disabled) return;
+    setValue(prev => {
+      if (prev.length >= 5) return prev; // max 5 digits (up to 99999)
+      return prev + digit;
+    });
+  }, [disabled]);
+
+  const handleBackspace = useCallback(() => {
+    if (disabled) return;
+    setValue(prev => prev.slice(0, -1));
+  }, [disabled]);
+
+  const handleSubmit = useCallback(() => {
+    if (disabled || !value) return;
+    onSubmit(value);
+    setValue('');
+  }, [disabled, value, onSubmit]);
+
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Transcript display */}
-      <div className="min-h-[3rem] flex items-center justify-center">
-        {isProcessing ? (
-          <div className="text-xl text-gray-400 animate-pulse">Thinking...</div>
-        ) : transcript ? (
-          <div className="text-3xl font-bold text-gray-700">{transcript}</div>
+    <div className="flex flex-col items-center gap-3 w-full max-w-xs mx-auto">
+      {/* Answer display */}
+      <div className="w-full bg-white rounded-2xl shadow-lg px-4 py-3 min-h-[3.5rem] flex items-center justify-center">
+        {value ? (
+          <span className="text-4xl font-bold text-gray-800 tracking-widest">{value}</span>
         ) : lastResult ? (
-          <div className={`text-3xl font-bold ${lastResult.correct ? 'text-green-500' : 'text-red-500'}`}>
-            {lastResult.correct ? lastResult.child_answer : lastResult.correct_answer}
-          </div>
+          <span className={`text-2xl font-bold ${lastResult.correct ? 'text-green-500' : 'text-red-500'}`}>
+            {lastResult.correct ? 'Correct!' : `Answer: ${lastResult.correct_answer}`}
+          </span>
         ) : (
-          <div className="text-xl text-gray-300">Tap the mic and say your answer</div>
+          <span className="text-xl text-gray-300">Type your answer</span>
         )}
       </div>
 
-      {/* Result feedback */}
-      {lastResult && !isListening && !isProcessing && (
-        <div className={`text-2xl font-bold ${lastResult.correct ? 'text-green-500' : 'text-red-500'}`}>
-          {lastResult.correct ? 'Correct!' : `The answer was ${lastResult.correct_answer}`}
-        </div>
-      )}
-
-      {/* Mic button */}
-      <MicButton
-        onPress={onMicPress}
-        isListening={isListening}
-        disabled={disabled || isProcessing}
-      />
-
-      {isListening && (
-        <div className="text-lg text-red-500 animate-pulse font-medium">
-          Listening... tap to stop
-        </div>
-      )}
+      {/* Numpad */}
+      <div className="grid grid-cols-3 gap-2 w-full">
+        {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(d => (
+          <button
+            key={d}
+            onClick={() => handleDigit(d)}
+            disabled={disabled}
+            className={`${BUTTON_BASE} h-16 bg-white hover:bg-gray-50 text-gray-800 disabled:opacity-40`}
+          >
+            {d}
+          </button>
+        ))}
+        <button
+          onClick={handleBackspace}
+          disabled={disabled || !value}
+          className={`${BUTTON_BASE} h-16 bg-gray-100 hover:bg-gray-200 text-gray-500 text-2xl disabled:opacity-40`}
+          aria-label="Backspace"
+        >
+          ←
+        </button>
+        <button
+          onClick={() => handleDigit('0')}
+          disabled={disabled}
+          className={`${BUTTON_BASE} h-16 bg-white hover:bg-gray-50 text-gray-800 disabled:opacity-40`}
+        >
+          0
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={disabled || !value}
+          className={`${BUTTON_BASE} h-16 bg-green-500 hover:bg-green-600 text-white disabled:opacity-40`}
+          aria-label="Submit answer"
+        >
+          ✓
+        </button>
+      </div>
     </div>
   );
 }
