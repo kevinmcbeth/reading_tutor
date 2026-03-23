@@ -32,25 +32,57 @@ interface WordScore {
   attempts: number;
 }
 
+function normalize(word: string): string {
+  return word.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
 function matchTranscriptToWords(transcript: string, words: BackendWord[]): Map<number, WordState> {
   const spokenWords = transcript.toLowerCase().split(/\s+/).filter(w => w.trim());
   const results = new Map<number, WordState>();
 
-  // Try to match each target word against spoken words
-  // Use a greedy left-to-right alignment
+  // Track which spoken words have been consumed
+  const usedSpoken = new Set<number>();
+
+  // Pass 1: Exact matches only (highest priority).
+  // Walk target words left-to-right, scanning spoken words left-to-right
+  // with a lookahead window, but only accept normalized exact matches.
   let spokenIdx = 0;
   for (const word of words) {
+    const targetNorm = normalize(word.text);
     let matched = false;
-    // Look ahead up to 3 positions for a match (allows skipped/extra words)
-    for (let look = 0; look < 3 && spokenIdx + look < spokenWords.length; look++) {
-      if (compareWords(spokenWords[spokenIdx + look], word.text)) {
+    for (let look = 0; look < 5 && spokenIdx + look < spokenWords.length; look++) {
+      if (usedSpoken.has(spokenIdx + look)) continue;
+      if (normalize(spokenWords[spokenIdx + look]) === targetNorm) {
         results.set(word.id, 'correct');
+        usedSpoken.add(spokenIdx + look);
         spokenIdx = spokenIdx + look + 1;
         matched = true;
         break;
       }
     }
     if (!matched) {
+      // Don't advance spokenIdx — the child may have skipped this word
+    }
+  }
+
+  // Pass 2: Fuzzy matches for remaining unmatched target words.
+  // Scan all unused spoken words for close-enough matches.
+  for (const word of words) {
+    if (results.has(word.id)) continue; // already matched in pass 1
+
+    let bestIdx = -1;
+    for (let si = 0; si < spokenWords.length; si++) {
+      if (usedSpoken.has(si)) continue;
+      if (compareWords(spokenWords[si], word.text)) {
+        bestIdx = si;
+        break; // take first available fuzzy match to preserve order
+      }
+    }
+
+    if (bestIdx >= 0) {
+      results.set(word.id, 'correct');
+      usedSpoken.add(bestIdx);
+    } else {
       results.set(word.id, 'missed');
     }
   }
@@ -179,9 +211,24 @@ export default function ReadingPage() {
     if (!speech.transcript || speech.isListening || speech.isProcessing) return;
     if (!currentSentence || sentenceComplete) return;
 
-    const matches = speech.alternatives.length > 0
+    // Use n-best hypotheses when available, falling back to plain transcript.
+    // Always also match the main transcript so single-hypothesis results work.
+    const nbestMatches = speech.alternatives.length > 0
       ? matchNBestToWords(speech.alternatives, currentSentence.words)
-      : matchTranscriptToWords(speech.transcript, currentSentence.words);
+      : new Map<number, WordState>();
+    const transcriptMatches = matchTranscriptToWords(speech.transcript, currentSentence.words);
+
+    // Merge: correct from either source wins
+    const matches = new Map<number, WordState>();
+    for (const word of currentSentence.words) {
+      const fromNbest = nbestMatches.get(word.id);
+      const fromTranscript = transcriptMatches.get(word.id);
+      if (fromNbest === 'correct' || fromTranscript === 'correct') {
+        matches.set(word.id, 'correct');
+      } else {
+        matches.set(word.id, fromTranscript ?? fromNbest ?? 'missed');
+      }
+    }
     const newScores = new Map(wordScores);
 
     matches.forEach((state, wordId) => {
