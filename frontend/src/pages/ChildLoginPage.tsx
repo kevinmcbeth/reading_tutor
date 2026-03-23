@@ -216,6 +216,15 @@ export default function ChildLoginPage() {
             </div>
 
             <button
+              onClick={() => { setSelectedChildForMode(null); navigate('/math'); }}
+              className="w-full mt-4 bg-gradient-to-r from-indigo-400 to-purple-500 rounded-2xl p-4 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
+            >
+              <span className="text-2xl mr-2">🧮</span>
+              <span className="text-lg font-bold">Math Practice</span>
+              <span className="text-sm text-white/80 ml-2">Earn coins with math!</span>
+            </button>
+
+            <button
               onClick={() => { setSelectedChildForMode(null); navigate('/shop'); }}
               className="w-full mt-4 bg-gradient-to-r from-amber-400 to-orange-400 rounded-2xl p-4 text-white text-center hover:shadow-xl hover:scale-105 active:scale-95 transition-all"
             >

@@ -53,7 +53,12 @@ async def _get_word_balance(pool, child_id: int) -> tuple[int, int]:
 
 
 async def _get_coin_balance(pool, child_id: int) -> tuple[int, int]:
-    """Return (total_coins_earned, total_coins_spent) for a child."""
+    """Return (total_coins_earned, total_coins_spent) for a child.
+
+    Coins come from both reading word conversions and math problem conversions.
+    Math conversions insert into coin_conversions with words_spent=0, so they
+    are already included in this SUM.
+    """
     earned = await pool.fetchval(
         "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1",
         child_id,

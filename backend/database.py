@@ -181,6 +181,71 @@ CREATE INDEX IF NOT EXISTS idx_reward_items_family ON reward_items(family_id);
 CREATE INDEX IF NOT EXISTS idx_redemptions_child ON redemptions(child_id);
 CREATE INDEX IF NOT EXISTS idx_coin_conversions_child ON coin_conversions(child_id);
 
+-- Math progress: per-child, per-subject grade tracking
+CREATE TABLE IF NOT EXISTS math_progress (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    subject TEXT NOT NULL,
+    grade_level INTEGER NOT NULL DEFAULT 0,
+    problems_attempted INTEGER NOT NULL DEFAULT 0,
+    problems_correct INTEGER NOT NULL DEFAULT 0,
+    streak INTEGER NOT NULL DEFAULT 0,
+    best_streak INTEGER NOT NULL DEFAULT 0,
+    set_by TEXT NOT NULL DEFAULT 'auto',
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(child_id, subject)
+);
+
+-- Math sessions
+CREATE TABLE IF NOT EXISTS math_sessions (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    subject TEXT NOT NULL,
+    grade_level INTEGER NOT NULL,
+    problems_attempted INTEGER NOT NULL DEFAULT 0,
+    problems_correct INTEGER NOT NULL DEFAULT 0,
+    started_at TIMESTAMP DEFAULT NOW(),
+    completed_at TIMESTAMP
+);
+
+-- Individual math problem results
+CREATE TABLE IF NOT EXISTS math_problems (
+    id SERIAL PRIMARY KEY,
+    session_id INTEGER REFERENCES math_sessions(id) NOT NULL,
+    problem_type TEXT NOT NULL,
+    problem_data JSONB NOT NULL,
+    correct_answer TEXT NOT NULL,
+    child_answer TEXT,
+    correct BOOLEAN NOT NULL DEFAULT FALSE,
+    attempts INTEGER NOT NULL DEFAULT 1,
+    answered_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Math-specific coin conversions
+CREATE TABLE IF NOT EXISTS math_coin_conversions (
+    id SERIAL PRIMARY KEY,
+    child_id INTEGER REFERENCES children(id) NOT NULL,
+    problems_spent INTEGER NOT NULL,
+    coins_earned INTEGER NOT NULL,
+    converted_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_math_progress_child ON math_progress(child_id);
+CREATE INDEX IF NOT EXISTS idx_math_sessions_child ON math_sessions(child_id);
+CREATE INDEX IF NOT EXISTS idx_math_problems_session ON math_problems(session_id);
+CREATE INDEX IF NOT EXISTS idx_math_coin_conversions_child ON math_coin_conversions(child_id);
+
+-- Migration: add math_problems_per_coin to families/children
+DO $$ BEGIN
+    ALTER TABLE families ADD COLUMN math_problems_per_coin INTEGER NOT NULL DEFAULT 20;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+DO $$ BEGIN
+    ALTER TABLE children ADD COLUMN math_problems_per_coin INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 -- Analytics & scaling indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_child_completed ON sessions(child_id, completed_at) WHERE completed_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_session_words_correct ON session_words(word_id, correct);

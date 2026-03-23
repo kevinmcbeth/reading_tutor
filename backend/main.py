@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from database import init_db, close_db, get_pool
-from endpoints import assets, children, fp, generation, parent, rewards, sessions, speech, stories
+from endpoints import assets, children, fp, generation, math, parent, rewards, sessions, speech, stories
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ app.include_router(generation.router)
 app.include_router(speech.router)
 app.include_router(fp.router)
 app.include_router(rewards.router)
+app.include_router(math.router)
 
 
 @app.get("/api/health")
