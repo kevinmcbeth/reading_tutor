@@ -94,6 +94,15 @@ async def _check_cancelled(job_id: int) -> bool:
     return row is not None and row["status"] == "cancelled"
 
 
+async def _batch_insert_words(conn, sentence_id: int, words: list[tuple[int, str, bool]]) -> None:
+    """Batch-insert word rows for a sentence using executemany."""
+    await conn.executemany(
+        "INSERT INTO story_words (sentence_id, idx, text, is_challenge_word) "
+        "VALUES ($1, $2, $3, $4)",
+        [(sentence_id, idx, text, is_challenge) for idx, text, is_challenge in words],
+    )
+
+
 async def _manage_comfyui(action: str) -> None:
     """Start or stop ComfyUI via systemctl to manage GPU memory (local mode only)."""
     try:
@@ -155,6 +164,49 @@ def _is_challenge_word(
         return clean not in COMMON_WORDS
     else:  # hard
         return True
+
+
+def _normalize_image_prompts(raw: any, num_sentences: int) -> list[dict]:
+    """Normalize LLM image prompt responses into a consistent list of dicts.
+
+    Handles: dict wrapping, list of dicts, list of lists, list of strings,
+    and assigns sentence_index when missing.
+    """
+    if isinstance(raw, dict):
+        if "prompts" in raw:
+            raw = raw["prompts"]
+        elif "image_prompt" in raw:
+            raw = [raw]
+        else:
+            raw = list(raw.values()) if raw else []
+
+    if not isinstance(raw, list):
+        return []
+
+    normalized = []
+    for i, item in enumerate(raw):
+        if isinstance(item, dict):
+            # Ensure sentence_index is present
+            if "sentence_index" not in item:
+                item["sentence_index"] = i
+            normalized.append(item)
+        elif isinstance(item, str):
+            # Bare string — treat as image_prompt
+            normalized.append({
+                "sentence_index": i,
+                "image_prompt": item,
+                "negative_prompt": "",
+            })
+        elif isinstance(item, list):
+            # List of [prompt, negative_prompt] or just [prompt]
+            normalized.append({
+                "sentence_index": i,
+                "image_prompt": item[0] if len(item) > 0 else "",
+                "negative_prompt": item[1] if len(item) > 1 else "",
+            })
+        # Skip anything else
+
+    return normalized
 
 
 def _is_local_mode() -> bool:
@@ -229,15 +281,11 @@ async def run_story_generation(
                     )
 
                     words = _tokenize(text)
-                    for w_idx, word in enumerate(words):
-                        is_challenge = _is_challenge_word(
-                            word, w_idx, difficulty, challenge_indices
-                        )
-                        await conn.execute(
-                            "INSERT INTO story_words (sentence_id, idx, text, is_challenge_word) "
-                            "VALUES ($1, $2, $3, $4)",
-                            sentence_id, w_idx, word, is_challenge,
-                        )
+                    word_rows = [
+                        (w_idx, word, _is_challenge_word(word, w_idx, difficulty, challenge_indices))
+                        for w_idx, word in enumerate(words)
+                    ]
+                    await _batch_insert_words(conn, sentence_id, word_rows)
 
         await log_generation(
             job_id,
@@ -261,10 +309,9 @@ async def run_story_generation(
             )
             image_prompts = []
 
-        # Update sentence records with image prompts
+        # Normalize and update sentence records with image prompts
+        image_prompts = _normalize_image_prompts(image_prompts, len(sentence_records))
         for ip in image_prompts:
-            if isinstance(ip, str):
-                continue
             s_idx = ip.get("sentence_index", 0)
             if s_idx < len(sentence_records):
                 sid = sentence_records[s_idx]["id"]
@@ -328,9 +375,9 @@ async def run_story_generation(
                 )
 
                 if success:
-                    img_data = Path(tmp_path).read_bytes()
-                    storage_service.save_file(storage_key, img_data)
-                    Path(tmp_path).unlink(missing_ok=True)
+                    img_data = await asyncio.to_thread(Path(tmp_path).read_bytes)
+                    await asyncio.to_thread(storage_service.save_file, storage_key, img_data)
+                    await asyncio.to_thread(Path(tmp_path).unlink, True)
 
                     await pool.execute(
                         "UPDATE story_sentences SET image_path = $1, has_image = TRUE "
@@ -338,7 +385,7 @@ async def run_story_generation(
                         storage_key, sid,
                     )
                 else:
-                    Path(tmp_path).unlink(missing_ok=True)
+                    await asyncio.to_thread(Path(tmp_path).unlink, True)
             else:
                 img_path = str(images_dir / f"sentence_{s_idx}.png")
                 success = await comfyui_client.generate_image(
@@ -384,84 +431,80 @@ async def run_story_generation(
             )
             audio_dir.mkdir(parents=True, exist_ok=True)
 
-        # Get all words from DB
-        all_words = []
-        for sr in sentence_records:
-            rows = await pool.fetch(
-                "SELECT * FROM story_words WHERE sentence_id = $1 ORDER BY idx",
-                sr["id"],
-            )
-            all_words.extend(rows)
+        # Get all words from DB (batch query)
+        sentence_ids = [sr["id"] for sr in sentence_records]
+        all_words = await pool.fetch(
+            "SELECT * FROM story_words WHERE sentence_id = ANY($1::int[]) ORDER BY sentence_id, idx",
+            sentence_ids,
+        )
 
         total_audio = len(all_words) + len(sentence_records)
         completed_audio = 0
 
-        # Generate word audio
-        for word_row in all_words:
-            if await _check_cancelled(job_id):
-                return
-
+        # --- Generate word audio in parallel batches ---
+        async def _generate_word_audio(word_row):
+            """Generate audio for a single word, returning (word_row, success)."""
             storage_key = f"stories/{story_uuid}/audio/word_{word_row['id']}.wav"
-
             if settings.TTS_BACKEND == "remote":
                 from services import tts_client
                 audio_data = await tts_client.generate_word_audio(word_row["text"])
                 success = audio_data is not None
                 if success:
-                    storage_service.save_file(storage_key, audio_data)
-                    await pool.execute(
-                        "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
-                        storage_key, word_row["id"],
-                    )
+                    await asyncio.to_thread(storage_service.save_file, storage_key, audio_data)
+                return word_row, success, storage_key
             else:
                 from services import tts_service
                 word_path = str(audio_dir / f"word_{word_row['id']}.wav")
                 success = await tts_service.generate_word_audio_async(
                     word_row["text"], word_path
                 )
+                if success and settings.STORAGE_BACKEND == "s3":
+                    data = await asyncio.to_thread(Path(word_path).read_bytes)
+                    await asyncio.to_thread(storage_service.save_file, storage_key, data)
+                    await asyncio.to_thread(Path(word_path).unlink, True)
+                    return word_row, success, storage_key
+                return word_row, success, word_path
+
+        # Process words in parallel (semaphore in tts_service limits concurrency)
+        BATCH_SIZE = 16
+        for batch_start in range(0, len(all_words), BATCH_SIZE):
+            if await _check_cancelled(job_id):
+                return
+
+            batch = all_words[batch_start:batch_start + BATCH_SIZE]
+            results = await asyncio.gather(
+                *[_generate_word_audio(w) for w in batch],
+                return_exceptions=True,
+            )
+
+            for res in results:
+                if isinstance(res, Exception):
+                    await log_generation(job_id, "warning", f"Audio generation error: {res}")
+                    completed_audio += 1
+                    continue
+                word_row, success, path = res
                 if success:
-                    if settings.STORAGE_BACKEND == "s3":
-                        storage_service.save_file(storage_key, Path(word_path).read_bytes())
-                        Path(word_path).unlink(missing_ok=True)
-                        await pool.execute(
-                            "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
-                            storage_key, word_row["id"],
-                        )
-                    else:
-                        await pool.execute(
-                            "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
-                            word_path, word_row["id"],
-                        )
+                    await pool.execute(
+                        "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
+                        path, word_row["id"],
+                    )
+                completed_audio += 1
 
-            if success:
-                await log_generation(
-                    job_id, "info", f"Audio generated for word '{word_row['text']}'"
-                )
-            else:
-                await log_generation(
-                    job_id,
-                    "warning",
-                    f"Audio generation failed for word '{word_row['text']}'",
-                )
-
-            completed_audio += 1
             if total_audio > 0:
                 pct = 60 + (completed_audio / total_audio) * 40
                 await _update_job(job_id, progress_pct=pct)
 
-        # Generate sentence audio
-        for sr in sentence_records:
-            if await _check_cancelled(job_id):
-                return
-
+        # --- Generate sentence audio in parallel ---
+        async def _generate_sentence_audio(sr):
+            """Generate audio for a single sentence, returning (sr, success)."""
             storage_key = f"stories/{story_uuid}/audio/sentence_{sr['idx']}.wav"
-
             if settings.TTS_BACKEND == "remote":
                 from services import tts_client
                 audio_data = await tts_client.generate_sentence_audio(sr["text"])
                 success = audio_data is not None
                 if success:
-                    storage_service.save_file(storage_key, audio_data)
+                    await asyncio.to_thread(storage_service.save_file, storage_key, audio_data)
+                return sr, success
             else:
                 from services import tts_service
                 sent_path = str(audio_dir / f"sentence_{sr['idx']}.wav")
@@ -469,24 +512,29 @@ async def run_story_generation(
                     sr["text"], sent_path
                 )
                 if success and settings.STORAGE_BACKEND == "s3":
-                    storage_service.save_file(storage_key, Path(sent_path).read_bytes())
-                    Path(sent_path).unlink(missing_ok=True)
+                    data = await asyncio.to_thread(Path(sent_path).read_bytes)
+                    await asyncio.to_thread(storage_service.save_file, storage_key, data)
+                    await asyncio.to_thread(Path(sent_path).unlink, True)
+                return sr, success
 
-            if success:
-                await log_generation(
-                    job_id, "info", f"Audio generated for sentence {sr['idx']}"
-                )
+        sent_results = await asyncio.gather(
+            *[_generate_sentence_audio(sr) for sr in sentence_records],
+            return_exceptions=True,
+        )
+        for res in sent_results:
+            if isinstance(res, Exception):
+                await log_generation(job_id, "warning", f"Sentence audio error: {res}")
             else:
-                await log_generation(
-                    job_id,
-                    "warning",
-                    f"Audio generation failed for sentence {sr['idx']}",
-                )
-
+                sr, success = res
+                if success:
+                    await log_generation(job_id, "info", f"Audio generated for sentence {sr['idx']}")
+                else:
+                    await log_generation(job_id, "warning", f"Audio generation failed for sentence {sr['idx']}")
             completed_audio += 1
-            if total_audio > 0:
-                pct = 60 + (completed_audio / total_audio) * 40
-                await _update_job(job_id, progress_pct=pct)
+
+        if total_audio > 0:
+            pct = 60 + (completed_audio / total_audio) * 40
+            await _update_job(job_id, progress_pct=pct)
 
         # --- Complete ---
         await _update_job(
@@ -627,13 +675,11 @@ async def run_fp_story_generation(
                     )
 
                     words = _tokenize(text)
-                    for w_idx, word in enumerate(words):
-                        is_challenge = _fp_is_challenge_word(word, fp_level, vocab)
-                        await conn.execute(
-                            "INSERT INTO story_words (sentence_id, idx, text, is_challenge_word) "
-                            "VALUES ($1, $2, $3, $4)",
-                            sentence_id, w_idx, word, is_challenge,
-                        )
+                    word_rows = [
+                        (w_idx, word, _fp_is_challenge_word(word, fp_level, vocab))
+                        for w_idx, word in enumerate(words)
+                    ]
+                    await _batch_insert_words(conn, sentence_id, word_rows)
 
         await log_generation(
             job_id, "info",
@@ -660,18 +706,10 @@ async def run_fp_story_generation(
                 image_prompts = []
 
             # Normalize LLM response
-            if isinstance(image_prompts, dict):
-                if "prompts" in image_prompts:
-                    image_prompts = image_prompts["prompts"]
-                elif "image_prompt" in image_prompts:
-                    image_prompts = [image_prompts]
-                else:
-                    image_prompts = list(image_prompts.values()) if image_prompts else []
+            image_prompts = _normalize_image_prompts(image_prompts, len(sentence_records))
 
             # Save prompts to DB
             for ip in image_prompts:
-                if isinstance(ip, str):
-                    continue
                 s_idx = ip.get("sentence_index", 0)
                 if s_idx < len(sentence_records):
                     sid = sentence_records[s_idx]["id"]
@@ -751,46 +789,63 @@ async def run_fp_story_generation(
         audio_dir = Path(settings.data_path) / "stories" / story_uuid / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
 
-        all_words = []
-        for sr in sentence_records:
-            rows = await pool.fetch(
-                "SELECT * FROM story_words WHERE sentence_id = $1 ORDER BY idx", sr["id"],
-            )
-            all_words.extend(rows)
+        # Batch query all words
+        sentence_ids = [sr["id"] for sr in sentence_records]
+        all_words = await pool.fetch(
+            "SELECT * FROM story_words WHERE sentence_id = ANY($1::int[]) ORDER BY sentence_id, idx",
+            sentence_ids,
+        )
 
         total_audio = len(all_words) + len(sentence_records)
         completed_audio = 0
+        base_pct = 60 if generate_images else 0
+        range_pct = 40 if generate_images else 100
 
         from services import tts_service
 
-        for word_row in all_words:
-            if await _check_cancelled(job_id):
-                return
+        # Generate word audio in parallel batches (semaphore in tts_service limits GPU concurrency)
+        async def _gen_word(word_row):
             word_path = str(audio_dir / f"word_{word_row['id']}.wav")
             success = await tts_service.generate_word_audio_async(word_row["text"], word_path)
-            if success:
-                await pool.execute(
-                    "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
-                    word_path, word_row["id"],
-                )
-            completed_audio += 1
+            return word_row, success, word_path
+
+        BATCH_SIZE = 16
+        for batch_start in range(0, len(all_words), BATCH_SIZE):
+            if await _check_cancelled(job_id):
+                return
+            batch = all_words[batch_start:batch_start + BATCH_SIZE]
+            results = await asyncio.gather(
+                *[_gen_word(w) for w in batch], return_exceptions=True,
+            )
+            for res in results:
+                if isinstance(res, Exception):
+                    logger.warning("Word audio error: %s", res)
+                else:
+                    word_row, success, word_path = res
+                    if success:
+                        await pool.execute(
+                            "UPDATE story_words SET audio_path = $1, has_audio = TRUE WHERE id = $2",
+                            word_path, word_row["id"],
+                        )
+                completed_audio += 1
             if total_audio > 0:
-                base_pct = 60 if generate_images else 0
-                range_pct = 40 if generate_images else 100
                 pct = base_pct + (completed_audio / total_audio) * range_pct
                 await _update_job(job_id, progress_pct=pct)
 
-        for sr in sentence_records:
-            if await _check_cancelled(job_id):
-                return
+        # Generate sentence audio in parallel
+        async def _gen_sentence(sr):
             sent_path = str(audio_dir / f"sentence_{sr['idx']}.wav")
             success = await tts_service.generate_sentence_audio_async(sr["text"], sent_path)
+            return sr, success
+
+        sent_results = await asyncio.gather(
+            *[_gen_sentence(sr) for sr in sentence_records], return_exceptions=True,
+        )
+        for res in sent_results:
             completed_audio += 1
-            if total_audio > 0:
-                base_pct = 60 if generate_images else 0
-                range_pct = 40 if generate_images else 100
-                pct = base_pct + (completed_audio / total_audio) * range_pct
-                await _update_job(job_id, progress_pct=pct)
+        if total_audio > 0:
+            pct = base_pct + (completed_audio / total_audio) * range_pct
+            await _update_job(job_id, progress_pct=pct)
 
         # --- Complete ---
         await _update_job(

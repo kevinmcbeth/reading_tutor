@@ -13,6 +13,16 @@ PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 VALID_STYLES = {"cartoon", "soft_pastoral", "watercolor", "realistic", "bright_pop"}
 
+# Reusable HTTP client for connection pooling
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(timeout=httpx.Timeout(300.0))
+    return _client
+
 
 def _read_prompt(filename: str) -> str:
     """Read a system prompt file."""
@@ -55,11 +65,11 @@ async def _chat(system_prompt: str, user_prompt: str) -> str:
         "stream": False,
         "format": "json",
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
-        resp = await client.post(f"{settings.OLLAMA_URL}/api/chat", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["message"]["content"]
+    client = _get_client()
+    resp = await client.post(f"{settings.OLLAMA_URL}/api/chat", json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    return data["message"]["content"]
 
 
 async def generate_story(topic: str, difficulty: str, theme: str | None = None) -> dict:

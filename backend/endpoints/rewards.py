@@ -261,20 +261,31 @@ async def convert_words_to_coins(
     rate = await _get_exchange_rate(pool, child_id, family_id)
     words_needed = coins * rate
 
-    words_earned, words_converted = await _get_word_balance(pool, child_id)
-    words_available = words_earned - words_converted
+    # Atomic check-and-insert inside a transaction to prevent double-spending
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            # Lock the child's conversion rows to prevent concurrent conversions
+            words_earned = await conn.fetchval(
+                "SELECT COALESCE(SUM(score), 0) FROM sessions WHERE child_id = $1 AND completed_at IS NOT NULL",
+                child_id,
+            )
+            words_converted = await conn.fetchval(
+                "SELECT COALESCE(SUM(words_spent), 0) FROM coin_conversions WHERE child_id = $1 FOR UPDATE",
+                child_id,
+            )
+            words_available = int(words_earned) - int(words_converted)
 
-    if words_available < words_needed:
-        max_coins = words_available // rate
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough words. Need {words_needed}, have {words_available}. You can convert up to {max_coins} coins.",
-        )
+            if words_available < words_needed:
+                max_coins = words_available // rate
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Not enough words. Need {words_needed}, have {words_available}. You can convert up to {max_coins} coins.",
+                )
 
-    await pool.execute(
-        "INSERT INTO coin_conversions (child_id, words_spent, coins_earned) VALUES ($1, $2, $3)",
-        child_id, words_needed, coins,
-    )
+            await conn.execute(
+                "INSERT INTO coin_conversions (child_id, words_spent, coins_earned) VALUES ($1, $2, $3)",
+                child_id, words_needed, coins,
+            )
 
     return {
         "detail": f"Converted {words_needed} words into {coins} coins",
@@ -303,18 +314,29 @@ async def redeem_item(
     if not item:
         raise HTTPException(status_code=404, detail="Reward item not found or inactive")
 
-    coins_earned, coins_spent = await _get_coin_balance(pool, child_id)
-    coin_balance = coins_earned - coins_spent
-    if coin_balance < item["cost"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough coins. Need {item['cost']}, have {coin_balance}.",
-        )
+    # Atomic check-and-insert inside a transaction to prevent double-spending
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            coins_earned = await conn.fetchval(
+                "SELECT COALESCE(SUM(coins_earned), 0) FROM coin_conversions WHERE child_id = $1",
+                child_id,
+            )
+            coins_spent = await conn.fetchval(
+                "SELECT COALESCE(SUM(cost), 0) FROM redemptions WHERE child_id = $1 FOR UPDATE",
+                child_id,
+            )
+            coin_balance = int(coins_earned) - int(coins_spent)
+            if coin_balance < item["cost"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Not enough coins. Need {item['cost']}, have {coin_balance}.",
+                )
 
-    row = await pool.fetchrow(
-        "INSERT INTO redemptions (child_id, item_id, cost) VALUES ($1, $2, $3) RETURNING *",
-        child_id, item_id, item["cost"],
-    )
+            row = await conn.fetchrow(
+                "INSERT INTO redemptions (child_id, item_id, cost) VALUES ($1, $2, $3) RETURNING *",
+                child_id, item_id, item["cost"],
+            )
+
     return {
         "detail": "Redeemed successfully",
         "redemption_id": row["id"],

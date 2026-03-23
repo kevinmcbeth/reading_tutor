@@ -11,6 +11,9 @@ Guidelines by support level:
 - sparse: Occasional illustration, primarily decorative. May show a character or setting element.
 - rare: One simple illustration for the whole story, if any.
 
-Given the story text and art style, create image prompts for each sentence. Output valid JSON array: [{{"sentence_index": 0, "image_prompt": "...", "negative_prompt": "..."}}]
+Given the story text and art style, create ONE image prompt for EVERY sentence. You MUST output exactly one entry per sentence — do not skip any.
+
+Output valid JSON array with one object per sentence:
+[{{"sentence_index": 0, "image_prompt": "...", "negative_prompt": "..."}}, {{"sentence_index": 1, "image_prompt": "...", "negative_prompt": "..."}}, ...]
 
 Make prompts child-friendly, colorful, and matching the story's style. Adjust detail level based on the image support guidelines above.

@@ -121,17 +121,14 @@ async def complete_session(
             detail=f"Invalid word IDs for this story: {sorted(invalid_ids)}",
         )
 
-    score = 0
+    score = sum(1 for r in data.results if r.correct)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            for result in data.results:
-                await conn.execute(
-                    "INSERT INTO session_words (session_id, word_id, attempts, correct) "
-                    "VALUES ($1, $2, $3, $4)",
-                    session_id, result.word_id, result.attempts, result.correct,
-                )
-                if result.correct:
-                    score += 1
+            await conn.executemany(
+                "INSERT INTO session_words (session_id, word_id, attempts, correct) "
+                "VALUES ($1, $2, $3, $4)",
+                [(session_id, r.word_id, r.attempts, r.correct) for r in data.results],
+            )
 
             now = datetime.utcnow()
             await conn.execute(
