@@ -517,3 +517,27 @@ export async function depositStockCoins(childId: string, coins: number): Promise
     body: JSON.stringify({ coins }),
   });
 }
+
+export async function createStock(data: {
+  symbol: string; name: string; emoji: string; category: string;
+  description?: string; base_price: number; volatility: number;
+}): Promise<StockInfoResponse> {
+  return fetchJson<StockInfoResponse>('/stockmarket/admin/stocks', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateStock(stockId: number, data: {
+  symbol: string; name: string; emoji: string; category: string;
+  description?: string; base_price: number; volatility: number;
+}): Promise<StockInfoResponse> {
+  return fetchJson<StockInfoResponse>(`/stockmarket/admin/stocks/${stockId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteStock(stockId: number): Promise<void> {
+  await fetchJson(`/stockmarket/admin/stocks/${stockId}`, { method: 'DELETE' });
+}

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from auth import get_current_family
 from database import get_pool
 from models.api_models import (
+    StockCreate,
     StockDepositRequest,
     StockDetail,
     StockInfo,
@@ -527,3 +528,97 @@ async def deposit_coins(
         "stock_balance": round(new_balance, 2),
         "words_remaining": new_words_available,
     }
+
+
+# ---------- Admin (parent) endpoints ----------
+
+
+@router.post("/admin/stocks", response_model=StockInfo, status_code=201)
+async def create_stock(
+    stock: StockCreate,
+    family_id: int = Depends(get_current_family),
+):
+    """Create a new stock (parent only)."""
+    pool = get_pool()
+    existing = await pool.fetchval(
+        "SELECT id FROM stocks WHERE symbol = $1", stock.symbol
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Stock {stock.symbol} already exists")
+
+    row = await pool.fetchrow(
+        """INSERT INTO stocks (symbol, name, emoji, category, description, base_price, current_price, volatility)
+           VALUES ($1, $2, $3, $4, $5, $6, $6, $7) RETURNING *""",
+        stock.symbol, stock.name, stock.emoji, stock.category,
+        stock.description, stock.base_price, stock.volatility,
+    )
+    return StockInfo(
+        id=row["id"], symbol=row["symbol"], name=row["name"],
+        emoji=row["emoji"], category=row["category"],
+        description=row["description"], current_price=row["current_price"],
+    )
+
+
+@router.put("/admin/stocks/{stock_id}", response_model=StockInfo)
+async def update_stock(
+    stock_id: int,
+    stock: StockCreate,
+    family_id: int = Depends(get_current_family),
+):
+    """Update an existing stock (parent only)."""
+    pool = get_pool()
+    existing = await pool.fetchrow("SELECT * FROM stocks WHERE id = $1", stock_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Stock not found")
+
+    # Check symbol uniqueness if changed
+    if stock.symbol != existing["symbol"]:
+        dupe = await pool.fetchval(
+            "SELECT id FROM stocks WHERE symbol = $1 AND id != $2",
+            stock.symbol, stock_id,
+        )
+        if dupe:
+            raise HTTPException(status_code=409, detail=f"Symbol {stock.symbol} already in use")
+
+    row = await pool.fetchrow(
+        """UPDATE stocks SET symbol = $1, name = $2, emoji = $3, category = $4,
+           description = $5, volatility = $6
+           WHERE id = $7 RETURNING *""",
+        stock.symbol, stock.name, stock.emoji, stock.category,
+        stock.description, stock.volatility, stock_id,
+    )
+    return StockInfo(
+        id=row["id"], symbol=row["symbol"], name=row["name"],
+        emoji=row["emoji"], category=row["category"],
+        description=row["description"], current_price=row["current_price"],
+    )
+
+
+@router.delete("/admin/stocks/{stock_id}")
+async def delete_stock(
+    stock_id: int,
+    family_id: int = Depends(get_current_family),
+):
+    """Delete a stock (parent only). Fails if anyone holds shares."""
+    pool = get_pool()
+    existing = await pool.fetchrow("SELECT * FROM stocks WHERE id = $1", stock_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Stock not found")
+
+    held = await pool.fetchval(
+        "SELECT COALESCE(SUM(shares), 0) FROM child_stock_holdings WHERE stock_id = $1",
+        stock_id,
+    )
+    if held and held > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete — {held} shares are held by children",
+        )
+
+    # Clean up related data
+    await pool.execute("DELETE FROM stock_stories WHERE stock_id = $1", stock_id)
+    await pool.execute("DELETE FROM stock_price_history WHERE stock_id = $1", stock_id)
+    await pool.execute("DELETE FROM child_stock_transactions WHERE stock_id = $1", stock_id)
+    await pool.execute("DELETE FROM stocks WHERE id = $1", stock_id)
+
+    return {"detail": f"Stock {existing['symbol']} deleted"}

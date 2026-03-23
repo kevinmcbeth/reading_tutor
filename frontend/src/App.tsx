@@ -15,6 +15,7 @@ import RewardShopPage from './pages/RewardShopPage'
 import RewardManagementPage from './pages/RewardManagementPage'
 import StockMarketPage from './pages/StockMarketPage'
 import StockDetailPage from './pages/StockDetailPage'
+import StockManagementPage from './pages/StockManagementPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth()
@@ -44,6 +45,7 @@ function AppRoutes() {
       <Route path="/shop" element={<ChildRoute><RewardShopPage /></ChildRoute>} />
       <Route path="/parent/dashboard" element={<ProtectedRoute><ParentDashboard /></ProtectedRoute>} />
       <Route path="/parent/rewards" element={<ProtectedRoute><RewardManagementPage /></ProtectedRoute>} />
+      <Route path="/parent/stocks" element={<ProtectedRoute><StockManagementPage /></ProtectedRoute>} />
       <Route path="/parent/stories" element={<ProtectedRoute><StoryManagementPage /></ProtectedRoute>} />
       <Route path="/parent/queue" element={<ProtectedRoute><QueueMonitorPage /></ProtectedRoute>} />
       <Route path="/parent/logs/:jobId" element={<ProtectedRoute><GenerationLogsPage /></ProtectedRoute>} />

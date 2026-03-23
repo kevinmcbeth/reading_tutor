@@ -383,3 +383,45 @@ class StockDepositRequest(BaseModel):
         if v < 1:
             raise ValueError("Must deposit at least 1 coin")
         return v
+
+
+class StockCreate(BaseModel):
+    symbol: str
+    name: str
+    emoji: str = "📊"
+    category: str = "other"
+    description: Optional[str] = None
+    base_price: float = 100.0
+    volatility: float = 0.15
+
+    @field_validator("symbol")
+    @classmethod
+    def validate_symbol(cls, v: str) -> str:
+        v = v.strip().upper()
+        if not v or len(v) > 10:
+            raise ValueError("Symbol must be 1-10 characters")
+        if not v.isalpha():
+            raise ValueError("Symbol must be letters only")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 100:
+            raise ValueError("Name must be 1-100 characters")
+        return v
+
+    @field_validator("base_price")
+    @classmethod
+    def validate_price(cls, v: float) -> float:
+        if v < 1 or v > 10000:
+            raise ValueError("Price must be between 1 and 10,000")
+        return round(v, 2)
+
+    @field_validator("volatility")
+    @classmethod
+    def validate_volatility(cls, v: float) -> float:
+        if v < 0.01 or v > 1.0:
+            raise ValueError("Volatility must be between 0.01 and 1.0")
+        return round(v, 2)

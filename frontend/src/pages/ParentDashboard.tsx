@@ -99,6 +99,12 @@ export default function ParentDashboard() {
             >
               Rewards
             </button>
+            <button
+              onClick={() => navigate('/parent/stocks')}
+              className="px-4 py-2 bg-emerald-500 text-white rounded-full hover:bg-emerald-600 transition font-medium"
+            >
+              Stocks
+            </button>
           </div>
         </div>
 
