@@ -558,3 +558,136 @@ export async function updateStock(stockId: number, data: {
 export async function deleteStock(stockId: number): Promise<void> {
   await fetchJson(`/stockmarket/admin/stocks/${stockId}`, { method: 'DELETE' });
 }
+
+// --- Math Module ---
+
+export interface MathSubjectInfo {
+  subject: string;
+  display_name: string;
+  emoji: string;
+  grades: number[];
+  grade_names: string[];
+  input_mode: 'speech' | 'tap';
+  description: string;
+  coming_soon: boolean;
+}
+
+export interface MathProgressEntry {
+  subject: string;
+  grade_level: number;
+  problems_attempted: number;
+  problems_correct: number;
+  streak: number;
+  best_streak: number;
+  accuracy: number;
+  set_by: string;
+}
+
+export interface MathSessionResponse {
+  id: number;
+  child_id: number;
+  subject: string;
+  grade_level: number;
+  started_at: string | null;
+}
+
+export interface MathProblemResponse {
+  problem_id: number;
+  display: string;
+  problem_data: { a: number; b: number; operation: string };
+  problem_number: number;
+}
+
+export interface MathAnswerResponse {
+  correct: boolean;
+  correct_answer: string;
+  child_answer: string;
+  problem_id: number;
+}
+
+export interface MathSessionCompleteResponse {
+  session_id: number;
+  subject: string;
+  problems_attempted: number;
+  problems_correct: number;
+  accuracy: number;
+  streak: number;
+  best_streak: number;
+  grade_level: number;
+  advanced: boolean;
+  perfect: boolean;
+}
+
+export interface MathBalanceResponse {
+  child_id: number;
+  problems_available: number;
+  math_problems_per_coin: number;
+  coins_convertible: number;
+}
+
+export async function fetchMathSubjects(): Promise<MathSubjectInfo[]> {
+  return fetchJson<MathSubjectInfo[]>('/math/subjects');
+}
+
+export async function fetchMathProgress(childId: string): Promise<MathProgressEntry[]> {
+  return fetchJson<MathProgressEntry[]>(`/math/progress/${childId}`);
+}
+
+export async function setMathGradeLevel(childId: string, subject: string, gradeLevel: number): Promise<unknown> {
+  return fetchJson(`/math/progress/${childId}/${subject}`, {
+    method: 'PUT',
+    body: JSON.stringify({ grade_level: gradeLevel }),
+  });
+}
+
+export async function startMathSession(childId: string, subject: string): Promise<MathSessionResponse> {
+  return fetchJson<MathSessionResponse>('/math/sessions', {
+    method: 'POST',
+    body: JSON.stringify({ child_id: childId, subject }),
+  });
+}
+
+export async function fetchMathProblem(sessionId: number): Promise<MathProblemResponse> {
+  return fetchJson<MathProblemResponse>(`/math/sessions/${sessionId}/problem`, {
+    method: 'POST',
+  });
+}
+
+export async function submitMathAnswer(
+  sessionId: number,
+  answer: string,
+  transcript?: string,
+  alternatives?: string[],
+): Promise<MathAnswerResponse> {
+  return fetchJson<MathAnswerResponse>(`/math/sessions/${sessionId}/answer`, {
+    method: 'POST',
+    body: JSON.stringify({ answer, transcript, alternatives }),
+  });
+}
+
+export async function completeMathSession(sessionId: number): Promise<MathSessionCompleteResponse> {
+  return fetchJson<MathSessionCompleteResponse>(`/math/sessions/${sessionId}/complete`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchMathBalance(childId: string): Promise<MathBalanceResponse> {
+  return fetchJson<MathBalanceResponse>(`/math/balance/${childId}`);
+}
+
+export async function convertMathToCoins(childId: string, coins: number): Promise<ConvertResult> {
+  return fetchJson<ConvertResult>(`/math/convert/${childId}?coins=${coins}`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchMathExchangeRate(): Promise<{ family_rate: number; children: { child_id: number; name: string; math_problems_per_coin: number | null }[] }> {
+  return fetchJson('/math/exchange-rate');
+}
+
+export async function setMathExchangeRate(mathProblemsPerCoin: number, childId?: number): Promise<unknown> {
+  return fetchJson('/math/exchange-rate', {
+    method: 'PUT',
+    body: JSON.stringify({ math_problems_per_coin: mathProblemsPerCoin, child_id: childId ?? null }),
+  });
+}
