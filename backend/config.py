@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     BACKEND_PORT: int = 8000
     FRONTEND_URL: str = "http://localhost:3000"
     OLLAMA_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "qwen3:30b"
+    OLLAMA_MODEL: str = "qwen3.5:35b"
     COMFYUI_URL: str = "http://localhost:8188"
     DATA_DIR: str = "data"
     REFERENCE_VOICE: str = "assets/reference_voice.wav"
