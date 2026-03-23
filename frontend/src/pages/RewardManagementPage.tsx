@@ -11,6 +11,8 @@ import {
   fetchExchangeRate,
   setExchangeRate,
   clearChildExchangeRate,
+  fetchMathExchangeRate,
+  setMathExchangeRate,
   RewardItemResponse,
   ChildResponse,
   BalanceResponse,
@@ -35,6 +37,12 @@ export default function RewardManagementPage() {
   const [childRateInputs, setChildRateInputs] = useState<Record<number, string>>({});
   const [savingRate, setSavingRate] = useState<string | null>(null);
 
+  // Math exchange rate state
+  const [mathFamilyRate, setMathFamilyRate] = useState(20);
+  const [mathFamilyRateInput, setMathFamilyRateInput] = useState('20');
+  const [mathChildRates, setMathChildRates] = useState<{ child_id: number; name: string; math_problems_per_coin: number | null }[]>([]);
+  const [mathChildRateInputs, setMathChildRateInputs] = useState<Record<number, string>>({});
+
   // Form state
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -48,8 +56,8 @@ export default function RewardManagementPage() {
   const [expandedChild, setExpandedChild] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchRewardItems(false), fetchChildren(), fetchExchangeRate()])
-      .then(async ([itemsData, childrenData, rateData]) => {
+    Promise.all([fetchRewardItems(false), fetchChildren(), fetchExchangeRate(), fetchMathExchangeRate()])
+      .then(async ([itemsData, childrenData, rateData, mathRateData]) => {
         setItems(itemsData);
         setChildren(childrenData);
         setFamilyRate(rateData.family_rate);
@@ -60,6 +68,16 @@ export default function RewardManagementPage() {
           inputs[c.child_id] = c.words_per_coin !== null ? String(c.words_per_coin) : '';
         });
         setChildRateInputs(inputs);
+
+        // Math rates
+        setMathFamilyRate(mathRateData.family_rate);
+        setMathFamilyRateInput(String(mathRateData.family_rate));
+        setMathChildRates(mathRateData.children);
+        const mathInputs: Record<number, string> = {};
+        mathRateData.children.forEach(c => {
+          mathInputs[c.child_id] = c.math_problems_per_coin !== null ? String(c.math_problems_per_coin) : '';
+        });
+        setMathChildRateInputs(mathInputs);
 
         const balanceMap: Record<string, BalanceResponse> = {};
         await Promise.all(
@@ -126,6 +144,37 @@ export default function RewardManagementPage() {
       setChildRateInputs(prev => ({ ...prev, [childId]: '' }));
     } catch (err) {
       console.error('Failed to clear child rate:', err);
+    } finally {
+      setSavingRate(null);
+    }
+  };
+
+  const handleSaveMathFamilyRate = async () => {
+    const rate = parseInt(mathFamilyRateInput);
+    if (isNaN(rate) || rate < 1) return;
+    setSavingRate('math-family');
+    try {
+      await setMathExchangeRate(rate);
+      setMathFamilyRate(rate);
+    } catch (err) {
+      console.error('Failed to save math rate:', err);
+    } finally {
+      setSavingRate(null);
+    }
+  };
+
+  const handleSaveMathChildRate = async (childId: number) => {
+    const input = mathChildRateInputs[childId];
+    const rate = parseInt(input);
+    if (isNaN(rate) || rate < 1) return;
+    setSavingRate(`math-child-${childId}`);
+    try {
+      await setMathExchangeRate(rate, childId);
+      setMathChildRates(prev => prev.map(c =>
+        c.child_id === childId ? { ...c, math_problems_per_coin: rate } : c
+      ));
+    } catch (err) {
+      console.error('Failed to save math child rate:', err);
     } finally {
       setSavingRate(null);
     }
@@ -275,6 +324,71 @@ export default function RewardManagementPage() {
                         className="px-3 py-1 text-xs text-red-400 hover:text-red-600 transition"
                       >
                         Reset
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Math Exchange Rates */}
+        <div className="bg-white rounded-2xl p-5 shadow mb-8">
+          <h2 className="text-lg font-bold text-gray-700 mb-4">Math Exchange Rates</h2>
+
+          {/* Family default */}
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-sm font-medium text-gray-600 w-32">Default rate:</span>
+            <input
+              type="number"
+              value={mathFamilyRateInput}
+              onChange={e => setMathFamilyRateInput(e.target.value)}
+              min="1"
+              className="w-20 p-2 border-2 border-gray-200 rounded-xl text-center focus:border-purple-400 focus:outline-none"
+            />
+            <span className="text-gray-500 text-sm">problems = 1 🪙</span>
+            {parseInt(mathFamilyRateInput) !== mathFamilyRate && (
+              <button
+                onClick={handleSaveMathFamilyRate}
+                disabled={savingRate === 'math-family'}
+                className="px-3 py-1.5 bg-purple-500 text-white rounded-full text-xs font-medium hover:bg-purple-600 transition disabled:opacity-50"
+              >
+                {savingRate === 'math-family' ? '...' : 'Save'}
+              </button>
+            )}
+          </div>
+
+          {/* Per-child overrides */}
+          <div className="border-t pt-3">
+            <p className="text-xs text-gray-400 mb-3">Per-child overrides (leave blank to use default):</p>
+            <div className="space-y-2">
+              {mathChildRates.map(cr => {
+                const child = children.find(c => String(c.id) === String(cr.child_id));
+                const inputVal = mathChildRateInputs[cr.child_id] ?? '';
+                const savedVal = cr.math_problems_per_coin;
+                const hasChanged = inputVal !== '' && parseInt(inputVal) !== savedVal;
+                return (
+                  <div key={cr.child_id} className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 w-32 truncate">
+                      {child?.avatar || '😊'} {cr.name}
+                    </span>
+                    <input
+                      type="number"
+                      value={inputVal}
+                      onChange={e => setMathChildRateInputs(prev => ({ ...prev, [cr.child_id]: e.target.value }))}
+                      placeholder={String(mathFamilyRate)}
+                      min="1"
+                      className="w-20 p-2 border-2 border-gray-200 rounded-xl text-center focus:border-purple-400 focus:outline-none text-sm"
+                    />
+                    <span className="text-gray-400 text-xs">problems = 1 🪙</span>
+                    {hasChanged && (
+                      <button
+                        onClick={() => handleSaveMathChildRate(cr.child_id)}
+                        disabled={savingRate === `math-child-${cr.child_id}`}
+                        className="px-3 py-1 bg-purple-500 text-white rounded-full text-xs font-medium hover:bg-purple-600 transition disabled:opacity-50"
+                      >
+                        Save
                       </button>
                     )}
                   </div>
